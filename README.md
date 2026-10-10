@@ -68,11 +68,12 @@ everything.
 ## Develop
 
 ```sh
-# API server on :8080 (serves web/dist if it has been built)
-go run ./cmd/hushbin            # HB_DATA_DIR=./data for a local data dir
+# The Go binary embeds web/dist, so build the frontend once first
+cd web && npm install && npm run build && cd ..
+HB_DATA_DIR=./data go run ./cmd/hushbin     # API + app on :8080
 
 # Frontend with hot reload on :5173, proxying /api to :8080
-cd web && npm install && npm run dev
+cd web && npm run dev
 ```
 
 Checks:

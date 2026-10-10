@@ -268,3 +268,31 @@ A `: ping` comment is sent every 20 s. The stream ends after `paste.deleted`.
 - `localStorage` keys (all per paste id): owner token, guest author token,
   remembered `P`, nickname; plus UI preferences (theme, language, last
   paste type / expiry / discussion choice, editor mode).
+
+## 7. Implementation notes
+
+Choices the server makes where §4 is silent (the web client relies on them):
+
+- Malformed IDs, unknown `/api` paths and wrong methods all return
+  `404 not_found`.
+- A missing `X-Read-Auth` is `403 unauthorized`; a malformed one counts as
+  wrong. A present-but-wrong `X-Owner-Token` is always `403 forbidden`, even
+  where the token is optional; when both owner and author tokens are sent,
+  the owner wins.
+- Burn pastes are readable only through `/open`. Versions, attachments and
+  events return `400 invalid` before checking auth, so they cannot be used to
+  test a password without burning the paste. Pastes without a discussion
+  answer comment endpoints with `403 locked` / `404` before auth.
+- Guests may delete (not create or edit) their own comments while the
+  discussion is locked.
+- Comment attachments may be uploaded before the comment exists (the client
+  uploads, then posts). Attachments to tombstones are rejected.
+- Envelopes must be at least 30 bytes and start with `0x01`; base64url
+  decoding is strict.
+- Extra limits: `HB_MAX_ATTACHMENT_META` (16 KiB), `HB_MAX_ATTACHMENT_COUNT`
+  (500 per paste), `HB_MAX_COMMENTS` (1000 per paste),
+  `HB_MAX_STREAMS_PER_IP` (16 concurrent event streams). IPv6 clients are
+  rate-limited per /64.
+- Event streams open with an immediate `: ping`.
+- Mermaid source travels in a text node, not an attribute: DOMPurify drops
+  attribute values containing `-->`.

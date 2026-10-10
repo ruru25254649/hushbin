@@ -118,6 +118,7 @@ const zhTW: Dict = {
   'history.first': '第一個版本',
   'history.restore': '還原此版本',
   'history.restored': '已還原為第 {n} 版',
+  'history.unchanged': '{n} 行未變更',
   'history.empty': '沒有變更。',
 
   'discussion.title': '討論',

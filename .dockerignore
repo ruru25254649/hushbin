@@ -1,0 +1,12 @@
+.git
+**/.DS_Store
+web/node_modules
+web/dist
+data
+*.db
+*.db-wal
+*.db-shm
+/hushbin
+Dockerfile
+docker-compose.yml
+.dockerignore

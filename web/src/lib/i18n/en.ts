@@ -117,6 +117,7 @@ const en = {
   'history.first': 'First version',
   'history.restore': 'Restore this version',
   'history.restored': 'Restored as version {n}',
+  'history.unchanged': '{n} unchanged lines',
   'history.empty': 'No changes.',
 
   'discussion.title': 'Discussion',

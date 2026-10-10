@@ -98,7 +98,7 @@
       <Identicon tag={c.tag} size={isReply ? 24 : 30} />
       <div class="main">
         <header>
-          <span class="nick">{c.nick || t('discussion.anon')}</span>
+          {#if c.nick || c.author !== 'owner'}<span class="nick">{c.nick || t('discussion.anon')}</span>{/if}
           {#if c.author === 'owner'}<span class="badge">{t('discussion.author')}</span>{/if}
           {#if mine(c)}<span class="you muted">({t('discussion.you')})</span>{/if}
           <time class="muted" datetime={new Date(c.createdAt).toISOString()} title={absTime(c.createdAt)}>{relTime(c.createdAt)}</time>

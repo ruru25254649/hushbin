@@ -150,7 +150,8 @@ let labels: RenderLabels = { copy: 'Copy' };
 
 function codeBlock(code: string, lang: string): string {
   if (lang === 'mermaid') {
-    return `<div class="mermaid-block" data-mermaid="${escapeHtml(code)}"><pre class="mermaid-src">${escapeHtml(code)}</pre></div>\n`;
+    // The source lives in a text node: DOMPurify drops attribute values containing "-->".
+    return `<div class="mermaid-block"><pre class="mermaid-src">${escapeHtml(code)}</pre></div>\n`;
   }
   let html = escapeHtml(code);
   if (hljs && lang && hljs.getLanguage(lang)) {

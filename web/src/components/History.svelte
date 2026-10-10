@@ -68,9 +68,38 @@
       .catch(toastError);
   });
 
-  type Row = { kind: 'add' | 'del' | 'same'; parts: { text: string; mark: boolean }[] };
+  type Row = { kind: 'add' | 'del' | 'same' | 'skip'; parts: { text: string; mark: boolean }[]; skipped?: number };
 
-  const rows = $derived.by((): Row[] => {
+  const CONTEXT = 3;
+
+  /** Collapse long runs of unchanged lines, keeping some context around changes. */
+  function collapse(rows: Row[]): Row[] {
+    const out: Row[] = [];
+    let i = 0;
+    while (i < rows.length) {
+      if (rows[i].kind !== 'same') {
+        out.push(rows[i++]);
+        continue;
+      }
+      let j = i;
+      while (j < rows.length && rows[j].kind === 'same') j++;
+      const keepHead = i === 0 ? 0 : CONTEXT;
+      const keepTail = j === rows.length ? 0 : CONTEXT;
+      if (j - i > keepHead + keepTail + 1) {
+        out.push(...rows.slice(i, i + keepHead));
+        out.push({ kind: 'skip', parts: [], skipped: j - i - keepHead - keepTail });
+        out.push(...rows.slice(j - keepTail, j));
+      } else {
+        out.push(...rows.slice(i, j));
+      }
+      i = j;
+    }
+    return out;
+  }
+
+  const rows = $derived.by((): Row[] => collapse(diffRows()));
+
+  function diffRows(): Row[] {
     if (prev === null) return cur.split('\n').map((l) => ({ kind: 'add', parts: [{ text: l, mark: false }] }));
     const out: Row[] = [];
     const chunks = diffLines(prev, cur);
@@ -95,7 +124,7 @@
       for (const l of lines) out.push({ kind, parts: [{ text: l, mark: false }] });
     }
     return out;
-  });
+  }
 
   function splitRows(kind: Row['kind'], parts: Row['parts']): Row[] {
     const rows: Row[] = [{ kind, parts: [] }];
@@ -152,10 +181,14 @@
         {#if view === 'changes'}
           <div class="diff" role="table">
             {#each rows as r, i (i)}
+              {#if r.kind === 'skip'}
+                <div class="dl skip" role="row"><span class="sign" aria-hidden="true">⋯</span><span class="txt">{t('history.unchanged', { n: r.skipped ?? 0 })}</span></div>
+              {:else}
               <div class="dl {r.kind}" role="row">
                 <span class="sign" aria-hidden="true">{r.kind === 'add' ? '+' : r.kind === 'del' ? '−' : ' '}</span>
                 <span class="txt">{#each r.parts as p, j (j)}{#if p.mark}<mark>{p.text}</mark>{:else}{p.text}{/if}{/each}{#if !r.parts.length}&nbsp;{/if}</span>
               </div>
+              {/if}
             {/each}
             {#if prev !== null && cur === prev}<p class="muted">{t('history.empty')}</p>{/if}
           </div>
@@ -277,6 +310,13 @@
   }
   .dl.del {
     background: color-mix(in srgb, var(--danger) 12%, transparent);
+  }
+  .dl.skip {
+    color: var(--muted);
+    background: var(--surface-2);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 2px 0;
   }
   .dl.add mark {
     background: color-mix(in srgb, var(--ok) 32%, transparent);

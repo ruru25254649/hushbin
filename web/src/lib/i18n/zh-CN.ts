@@ -118,6 +118,7 @@ const zhCN: Dict = {
   'history.first': '第一个版本',
   'history.restore': '恢复此版本',
   'history.restored': '已恢复为第 {n} 版',
+  'history.unchanged': '{n} 行未更改',
   'history.empty': '没有变更。',
 
   'discussion.title': '讨论',

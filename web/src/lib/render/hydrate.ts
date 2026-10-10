@@ -121,7 +121,7 @@ export function hydrate(root: HTMLElement, atts: AttSource | null, labels: Hydra
 
   for (const block of root.querySelectorAll<HTMLElement>('.mermaid-block:not([data-hb])')) {
     block.dataset.hb = '1';
-    const src = block.dataset.mermaid ?? '';
+    const src = block.querySelector('.mermaid-src')?.textContent ?? '';
     renderMermaid(src)
       .then((svg) => {
         block.innerHTML = svg;

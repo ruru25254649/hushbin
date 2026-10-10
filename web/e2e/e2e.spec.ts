@@ -54,7 +54,8 @@ test('keep paste: password, rich markdown, attachments, discussion, edits, owner
   await page.getByPlaceholder('Title (optional)').fill('E2E paste');
   await typeInEditor(page, '.sheet', DOC + '\n');
   await page.locator('.sheet input[type=file]').setInputFiles(IMAGE);
-  await expect(page.locator('.sheet .cm-content')).toContainText('att:');
+  // Live preview renders the staged (not yet uploaded) image in place.
+  await expect(page.locator('.sheet .cm-lp-image img')).toHaveJSProperty('naturalWidth', 192);
 
   await page.getByLabel('Allow discussion').check();
   await page.getByRole('button', { name: 'Create' }).click();
@@ -220,13 +221,15 @@ test('keep without password after warning; language and theme', async ({ page, b
   await expect(bad.getByText(/does not exist|could not decrypt|incomplete/i)).toBeVisible();
 
   await page.goto('/');
-  await page.getByLabel('Language').selectOption('ja');
+  const lang = page.locator('.lang select');
+  await lang.selectOption('ja');
   await expect(page.getByRole('button', { name: '作成' })).toBeVisible();
-  await page.getByLabel('Language').selectOption('zh-TW');
+  await lang.selectOption('zh-TW');
   await expect(page.getByRole('button', { name: '建立' })).toBeVisible();
-  await page.getByLabel('Language').selectOption('zh-CN');
+  await lang.selectOption('zh-CN');
   await expect(page.getByRole('button', { name: '创建' })).toBeVisible();
-  await page.getByLabel('语言').selectOption('en');
+  await lang.selectOption('en');
+  await expect(page.getByRole('button', { name: 'Create' })).toBeVisible();
 
   await page.emulateMedia({ colorScheme: 'dark' });
   await reader.emulateMedia({ colorScheme: 'dark' });

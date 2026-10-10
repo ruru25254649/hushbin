@@ -119,6 +119,7 @@ const ja: Dict = {
   'history.first': '最初のバージョン',
   'history.restore': 'このバージョンに戻す',
   'history.restored': 'バージョン {n} として復元しました',
+  'history.unchanged': '変更のない {n} 行',
   'history.empty': '変更はありません。',
 
   'discussion.title': 'ディスカッション',
