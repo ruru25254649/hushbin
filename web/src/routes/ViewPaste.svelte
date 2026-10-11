@@ -7,7 +7,7 @@
   import PasswordField from '../components/PasswordField.svelte';
   import History, { type HistorySource } from '../components/History.svelte';
   import Discussion from '../components/Discussion.svelte';
-  import { t, relTime, absTime } from '../lib/i18n/index.svelte';
+  import { t, relTime, absTime, renderLabels } from '../lib/i18n/index.svelte';
   import {
     prefs,
     updatePrefs,
@@ -74,7 +74,7 @@
 
   let unsubscribe: (() => void) | null = null;
 
-  const labels = () => ({ copy: t('copy'), copied: t('copied'), download: t('download'), missing: t('att.missing'), diagramError: t('diagram.error') });
+  const labels = renderLabels;
 
   onMount(start);
   onDestroy(() => {
@@ -105,6 +105,7 @@
       s.createdAt = s.updatedAt = Date.now();
       s.expiresAt = h.expiresAt;
       s.discussion = h.discussion;
+      wireImages(s);
       store = s;
       justCreated = true;
       createdHasPassword = h.hasPassword;
@@ -164,6 +165,8 @@
       s.locked = res.paste.locked;
       s.comments = res.comments;
       s.addAttachments(res.paste.attachments);
+      wireImages(s);
+      s.resolver.ticket = res.paste.imageTicket ?? null;
       store = s;
       if (header.kdf && pw !== null && remember && u.p) secrets.setPw(id, toB64u(u.p));
       if (pw !== null) updatePrefs({ rememberPw: remember });
@@ -199,6 +202,16 @@
       phase = 'error';
       errorMsg = e instanceof ApiError ? e.message : (e as Error).message;
     }
+  }
+
+  /** Remote images go through the server's proxy; editors may register new URLs for preview. */
+  function wireImages(s: PasteStore) {
+    s.resolver.proxyEnabled = () => server.config.imageProxy !== false;
+    s.resolver.registrar = async (refs) => {
+      if (s.owner) return api.registerImages(s.u.id, { owner: s.owner }, refs);
+      if (s.discussion && !s.locked) return api.registerImages(s.u.id, { read: s.u.read }, refs);
+      throw new Error('cannot register images');
+    };
   }
 
   function live(s: PasteStore) {
@@ -282,7 +295,7 @@
     editTitle = store.plain.title;
     editBody = store.plain.body;
     editBase = store.version;
-    editFiles = new LocalFiles(store.atts);
+    editFiles = new LocalFiles(store.atts, true);
     editing = true;
   }
 

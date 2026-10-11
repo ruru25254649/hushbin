@@ -161,6 +161,9 @@ const zhTW: Dict = {
   'shortcuts.close': '關閉對話框',
 
   'attachments.title': '附件',
+  'img.pending': '建立後將透過你的伺服器顯示',
+  'img.failed': '無法載入',
+  'img.disabled': '此伺服器已關閉遠端圖片',
   'att.missing': '附件無法使用',
   'diagram.error': '圖表錯誤',
   'share.received': '已加入分享的內容。',

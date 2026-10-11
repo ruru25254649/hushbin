@@ -6,6 +6,8 @@ import { sanitizeSvg, escapeHtml } from './markdown';
 export type AttMeta = { name: string; type: string; size: number };
 export type AttSource = {
   resolve(id: string): Promise<{ meta: AttMeta; url: string }>;
+  /** Object URL for a remote image, fetched through the server's proxy. */
+  external?(url: string, register?: boolean): Promise<string>;
 };
 
 export type HydrateLabels = {
@@ -13,7 +15,68 @@ export type HydrateLabels = {
   download: string;
   missing: string;
   diagramError: string;
+  /** Remote image in a paste that doesn't exist yet. */
+  extPending: string;
+  extFailed: string;
+  extDisabled: string;
 };
+
+const RASTER = /^image\/(png|jpe?g|gif|webp|avif|bmp)$/i;
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Shown instead of a remote image that is not (yet) available. */
+export function extFallback(url: string, alt: string, reason: string): HTMLElement {
+  const a = document.createElement('a');
+  a.className = 'ext-fallback';
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer nofollow';
+  a.title = url;
+  a.innerHTML =
+    `<span class="ext-icon" aria-hidden="true"></span>` +
+    `<span class="ext-info"><span class="ext-alt">${escapeHtml(alt || hostOf(url))}</span>` +
+    `<span class="ext-why">${escapeHtml(hostOf(url))} · ${escapeHtml(reason)}</span></span>`;
+  return a;
+}
+
+/** The paste does not exist yet, so the server cannot fetch for it. */
+export class ExternalPending extends Error {}
+/** The operator turned the image proxy off. */
+export class ExternalDisabled extends Error {}
+
+export function extReason(e: unknown, labels: HydrateLabels): string {
+  if (e instanceof ExternalPending) return labels.extPending;
+  if (e instanceof ExternalDisabled) return labels.extDisabled;
+  return labels.extFailed;
+}
+
+/** Load a remote image into `img`, or swap in a fallback card. */
+export function loadExternal(img: HTMLImageElement, url: string, atts: AttSource | null, labels: HydrateLabels, onLoad?: () => void) {
+  img.classList.add('loading');
+  const fail = (e: unknown) => img.replaceWith(extFallback(url, img.alt, extReason(e, labels)));
+  if (!atts?.external) {
+    fail(new Error('no source'));
+    return;
+  }
+  atts
+    .external(url)
+    .then((src) => {
+      img.onload = () => {
+        img.classList.remove('loading');
+        onLoad?.();
+      };
+      img.onerror = () => fail(new Error('decode'));
+      img.src = src;
+    })
+    .catch(fail);
+}
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -92,6 +155,11 @@ export function hydrate(root: HTMLElement, atts: AttSource | null, labels: Hydra
     atts
       .resolve(id)
       .then(({ url, meta }) => {
+        // Only raster images render inline; anything else becomes a file card.
+        if (!RASTER.test(meta.type)) {
+          img.replaceWith(fileCard(meta, url, labels));
+          return;
+        }
         img.src = url;
         if (!img.alt) img.alt = meta.name;
         img.classList.remove('loading');
@@ -101,6 +169,11 @@ export function hydrate(root: HTMLElement, atts: AttSource | null, labels: Hydra
         img.classList.add('missing');
         img.alt = labels.missing;
       });
+  }
+
+  for (const img of root.querySelectorAll<HTMLImageElement>('img[data-ext]:not([data-hb])')) {
+    img.dataset.hb = '1';
+    loadExternal(img, img.dataset.ext!, atts, labels);
   }
 
   for (const a of root.querySelectorAll<HTMLAnchorElement>('a[data-att]:not([data-hb])')) {

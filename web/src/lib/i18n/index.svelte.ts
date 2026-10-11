@@ -59,3 +59,17 @@ export function relTime(ms: number, now = Date.now()): string {
 export function absTime(ms: number): string {
   return new Intl.DateTimeFormat(i18n.lang, { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
 }
+
+/** Labels used inside rendered Markdown (code copy buttons, attachments, remote images). */
+export function renderLabels() {
+  return {
+    copy: t('copy'),
+    copied: t('copied'),
+    download: t('download'),
+    missing: t('att.missing'),
+    diagramError: t('diagram.error'),
+    extPending: t('img.pending'),
+    extFailed: t('img.failed'),
+    extDisabled: t('img.disabled'),
+  };
+}

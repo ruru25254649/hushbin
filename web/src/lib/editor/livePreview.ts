@@ -7,8 +7,8 @@ import { Facet, StateField, type EditorState, type Range, type Extension } from 
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import type { SyntaxNodeRef } from '@lezer/common';
-import { ensureDeps, renderMarkdownSync, renderMath, escapeHtml } from '../render/markdown';
-import { hydrate, renderMermaid, fileCard, type AttSource, type HydrateLabels } from '../render/hydrate';
+import { ensureDeps, renderMarkdownSync, renderMath, escapeHtml, normalizeExt } from '../render/markdown';
+import { hydrate, renderMermaid, fileCard, loadExternal, type AttSource, type HydrateLabels } from '../render/hydrate';
 
 export type LiveContext = {
   atts: AttSource | null;
@@ -17,7 +17,16 @@ export type LiveContext = {
 
 const defaultCtx: LiveContext = {
   atts: null,
-  labels: { copy: 'Copy', copied: 'Copied', download: 'Download', missing: 'Missing attachment', diagramError: 'Diagram error' },
+  labels: {
+    copy: 'Copy',
+    copied: 'Copied',
+    download: 'Download',
+    missing: 'Missing attachment',
+    diagramError: 'Diagram error',
+    extPending: 'Remote image',
+    extFailed: 'Could not load',
+    extDisabled: 'Remote images are off',
+  },
 };
 
 export const liveContext = Facet.define<LiveContext, LiveContext>({
@@ -143,13 +152,14 @@ class ImageWidget extends WidgetType {
           img.alt = ctx.labels.missing;
         });
     } else {
-      const a = document.createElement('a');
-      a.className = 'ext-img';
-      a.textContent = this.alt || this.src;
-      a.href = this.src;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer nofollow';
-      wrap.appendChild(a);
+      // Remote image: through the server's proxy, never fetched directly.
+      const img = document.createElement('img');
+      img.alt = this.alt;
+      wrap.appendChild(img);
+      const ctx = view.state.facet(liveContext);
+      const url = normalizeExt(this.src);
+      if (url) loadExternal(img, url, ctx.atts, ctx.labels, () => view.requestMeasure());
+      else img.replaceWith(document.createTextNode(this.alt || this.src));
     }
     wrap.addEventListener('mousedown', (e) => placeCursor(view, wrap, e));
     return wrap;

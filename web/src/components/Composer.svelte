@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import Editor from './Editor.svelte';
   import Icon from './Icon.svelte';
-  import { t } from '../lib/i18n/index.svelte';
+  import { t, renderLabels } from '../lib/i18n/index.svelte';
   import { prefs, updatePrefs, server, toast, toastError, modKey } from '../lib/ui.svelte';
   import { attachmentMarkdown, uploadFile, type PlainComment } from '../lib/paste';
   import { LocalFiles, stageFiles } from '../lib/local';
@@ -41,12 +41,12 @@
   let busy = $state(false);
   let editor = $state<EditorHandle>();
   let fileInput: HTMLInputElement;
-  const staged = new LocalFiles(init.atts);
+  const staged = new LocalFiles(init.atts, true);
 
   const context: LiveContext = {
     atts: staged,
     get labels() {
-      return { copy: t('copy'), copied: t('copied'), download: t('download'), missing: t('att.missing'), diagramError: t('diagram.error') };
+      return renderLabels();
     },
   };
 

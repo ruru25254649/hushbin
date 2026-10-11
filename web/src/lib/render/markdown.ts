@@ -185,8 +185,11 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   if (src.startsWith('att:')) {
     return `<img class="att-img" data-att="${escapeHtml(src.slice(4))}" alt="${escapeHtml(alt)}">`;
   }
-  // Remote images are not loaded (they would leak the reader's IP); show a link.
-  return `<a href="${escapeHtml(src)}" class="ext-img">${escapeHtml(alt || src)}</a>`;
+  // Remote images are fetched through the server's image proxy, never by the
+  // reader directly (that would leak the reader's IP to the image host).
+  const ext = normalizeExt(src);
+  if (ext) return `<img class="ext-img" data-ext="${escapeHtml(ext)}" alt="${escapeHtml(alt)}">`;
+  return escapeHtml(alt);
 };
 
 const defaultLinkOpen = md.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
@@ -208,6 +211,40 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     node.setAttribute('rel', 'noopener noreferrer nofollow');
   }
 });
+
+/**
+ * Canonical form of a remote image URL. The client registers
+ * SHA-256(canonical) with the server and later asks the proxy for exactly
+ * this string, so every caller must go through here. Null if not http(s).
+ */
+export function normalizeExt(src: string): string | null {
+  const raw = src.trim().replace(/^<(.*)>$/, '$1');
+  if (!/^https?:\/\//i.test(raw)) return null;
+  try {
+    const u = new URL(md.normalizeLink(raw));
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    return u.href.length <= 2048 ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remote image URLs (canonical, deduplicated, at most 100) referenced by a Markdown source. */
+export function remoteImages(src: string): string[] {
+  const out = new Set<string>();
+  const walk = (tokens: ReturnType<typeof md.parse>) => {
+    for (const t of tokens) {
+      if (t.type === 'image') {
+        const u = normalizeExt(String(t.attrGet('src') ?? ''));
+        if (u) out.add(u);
+      }
+      if (t.children) walk(t.children);
+    }
+  };
+  walk(md.parse(src, {}));
+  return [...out].slice(0, 100);
+}
 
 export function sanitize(html: string): string {
   return DOMPurify.sanitize(html, {

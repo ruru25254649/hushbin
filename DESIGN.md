@@ -229,6 +229,60 @@ with `fetch` streaming (so headers can be sent). Each message is one
 
 A `: ping` comment is sent every 20 s. The stream ends after `paste.deleted`.
 
+### Remote image proxy
+
+Markdown may reference remote images (`![](https://…)`). Readers never load
+them directly (that would leak their IP to the image host); the server
+fetches them instead. Because anyone can create a paste, the proxy must not
+become a general-purpose proxy, so it only fetches **registered URLs that
+turn out to be images on public hosts**:
+
+- **Registration.** `imageRef = b64u(SHA-256(utf8(url)))`, where `url` is the
+  exact string the client will later ask for (the client normalizes it as
+  `new URL(md.normalizeLink(src)).href`). Refs are sent as
+  `"imageRefs": [ref, …]` (optional, ≤ 100 per request) on paste create
+  (`meta`), `PUT /pastes/{id}`, comment create and comment edit. They are
+  unioned into a per-paste set (never removed, so history keeps working),
+  capped by `HB_MAX_IMAGE_REFS` (default 200) → `413 too_large`.
+  The server never stores a URL, only its hash.
+- `POST /api/pastes/{id}/image-refs` `{"imageRefs":[…]}` registers refs for a
+  live preview while editing: owner token, or read auth when the discussion
+  is enabled and not locked. Not for burn pastes. → `204`.
+- `POST /api/pastes/{id}/image` `{"url":"…"}` with `X-Read-Auth` — or, for a
+  burn paste that was just opened, `X-Image-Ticket` (see below). Returns the
+  image bytes.
+  - `url`: absolute `http`/`https`, ≤ 2048 bytes, no userinfo, port 80/443
+    (default ports only). Its hash must be in the paste's set, else
+    `404 not_found`.
+  - Every hop (≤ 3 redirects, each re-validated) must resolve to a public
+    unicast address; the check runs in the dialer, at connect time, so DNS
+    rebinding cannot bypass it. Loopback, private, link-local, CGNAT, multicast,
+    unspecified, documentation, benchmarking and reserved ranges (and IPv4-mapped
+    forms of them) are refused. The process's `HTTP(S)_PROXY` is ignored.
+  - Request: `GET`, no cookies, no Referer, `User-Agent: Hushbin-ImageProxy`,
+    `Accept: image/*`. Timeouts: 5 s connect, 10 s total.
+  - Response must be `200` and at most `HB_IMAGE_PROXY_MAX_BYTES` (10 MiB)
+    → otherwise `413 too_large` / `502 upstream`. The type is decided by
+    **sniffing the bytes** (PNG, JPEG, GIF, WebP, AVIF, BMP only; SVG and
+    everything else → `415 not_image`); the upstream `Content-Type` is ignored.
+  - Served with the sniffed `Content-Type`, `Cache-Control: private,
+    max-age=3600`, `X-Content-Type-Options: nosniff`,
+    `Content-Security-Policy: default-src 'none'; sandbox`.
+  - Bounded in-memory LRU cache keyed by URL (`HB_IMAGE_PROXY_CACHE_BYTES`,
+    default 64 MiB, 1 h TTL; failures cached 5 min). At most 8 upstream
+    fetches at once (`503 busy` after waiting 5 s). Per-IP limit
+    `HB_RATE_IMAGE` (default `600/h`).
+  - `HB_IMAGE_PROXY=false` disables it (`404`); `HB_IMAGE_PROXY_HOSTS`
+    (comma-separated domain suffixes) restricts it to listed hosts.
+    `HB_IMAGE_PROXY_ALLOW_PRIVATE=true` lifts the address and port checks —
+    for local testing only.
+- **Burn pastes.** The paste is deleted when opened, so the open response
+  carries `"imageTicket": "<b64u 32B>" | null` (non-null only when the paste
+  registered refs). The ticket is held in memory for 15 minutes, bound to the
+  paste id and its ref set, and accepted via `X-Image-Ticket` on
+  `/pastes/{id}/image`.
+- `GET /api/config` adds `"imageProxy": true|false`.
+
 ## 5. Server behaviour
 
 - Go, single static binary, SQLite (WAL) at `$HB_DATA_DIR/hushbin.db`,

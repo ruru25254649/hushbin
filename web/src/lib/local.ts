@@ -1,14 +1,25 @@
 // Attachments staged in the browser before they are uploaded.
 
-import { readFile, type LocalFile } from './paste';
-import type { AttSource } from './render/hydrate';
-import { formatBytes } from './render/hydrate';
+import { readFile, safeBlobType, type LocalFile } from './paste';
+import { formatBytes, ExternalPending, type AttSource } from './render/hydrate';
 import { t } from './i18n/index.svelte';
 
 export class LocalFiles implements AttSource {
   files = new Map<string, LocalFile>();
   private urls = new Map<string, string>();
-  constructor(private fallback: AttSource | null = null) {}
+  /**
+   * @param fallback       resolves anything not staged here (server attachments, remote images)
+   * @param registerRemote register remote image URLs with the server on preview (editing contexts)
+   */
+  constructor(
+    private fallback: AttSource | null = null,
+    private registerRemote = false,
+  ) {}
+
+  external(url: string, register = false): Promise<string> {
+    if (!this.fallback?.external) return Promise.reject(new ExternalPending());
+    return this.fallback.external(url, register || this.registerRemote);
+  }
 
   add(f: LocalFile) {
     this.files.set(f.id, f);
@@ -19,7 +30,7 @@ export class LocalFiles implements AttSource {
     if (!f) return this.fallback ? this.fallback.resolve(id) : Promise.reject(new Error('missing'));
     let url = this.urls.get(id);
     if (!url) {
-      url = URL.createObjectURL(new Blob([f.data], { type: f.type }));
+      url = URL.createObjectURL(new Blob([f.data], { type: safeBlobType(f.type) }));
       this.urls.set(id, url);
     }
     return Promise.resolve({ meta: { name: f.name, type: f.type, size: f.data.length }, url });

@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { renderMarkdown } from '../lib/render/markdown';
   import { hydrate, type AttSource } from '../lib/render/hydrate';
-  import { t } from '../lib/i18n/index.svelte';
+  import { renderLabels } from '../lib/i18n/index.svelte';
   import { ui } from '../lib/ui.svelte';
 
   let { source, atts = null }: { source: string; atts?: AttSource | null } = $props();
@@ -11,13 +11,7 @@
   let html = $state('');
   let seq = 0;
 
-  const labels = () => ({
-    copy: t('copy'),
-    copied: t('copied'),
-    download: t('download'),
-    missing: t('att.missing'),
-    diagramError: t('diagram.error'),
-  });
+  const labels = renderLabels;
 
   $effect(() => {
     const src = source;

@@ -19,6 +19,8 @@ import {
   type PasteKeys,
 } from './crypto';
 import { secrets } from './storage';
+import { remoteImages } from './render/markdown';
+import { ExternalPending, ExternalDisabled } from './render/hydrate';
 
 // ---------------------------------------------------------------- links
 
@@ -84,9 +86,32 @@ export function rememberedP(id: string): Bytes | null {
 
 export type LocalFile = { id: string; name: string; type: string; data: Bytes };
 
+/** Raster formats rendered inline. SVG is deliberately excluded: it can carry script. */
 export function isImage(type: string): boolean {
-  return /^image\/(png|jpe?g|gif|webp|avif|bmp|svg\+xml)$/i.test(type);
+  return /^image\/(png|jpe?g|gif|webp|avif|bmp)$/i.test(type);
 }
+
+/**
+ * Type for a blob: URL. Blob URLs share this origin, so anything that could
+ * render as a document (HTML, SVG, XML…) must never get its real type:
+ * "open image in new tab" on it would run in this origin.
+ */
+export function safeBlobType(type: string): string {
+  return isImage(type) ? type.toLowerCase() : 'application/octet-stream';
+}
+
+// ---------------------------------------------------------------- remote images
+
+/** imageRef = b64u(SHA-256(utf8(canonical URL))). See DESIGN.md "Remote image proxy". */
+export async function imageRef(url: string): Promise<string> {
+  return toB64u(await sha256(new TextEncoder().encode(url)));
+}
+
+export async function imageRefsFor(markdown: string): Promise<string[]> {
+  return Promise.all(remoteImages(markdown).map(imageRef));
+}
+
+export { ExternalPending, ExternalDisabled };
 
 export async function readFile(file: File): Promise<LocalFile> {
   return {
@@ -149,6 +174,7 @@ export async function createPaste(input: CreateInput): Promise<Created> {
       ownerVerifier: toB64u(await sha256(ownerRaw)),
       content,
       attachments: input.files.map((f, i) => ({ id: f.id, meta: sealed[i].meta })),
+      imageRefs: await imageRefsFor(input.body),
     },
     input.files.map((f, i) => ({ id: f.id, data: sealed[i].data })),
   );
@@ -198,7 +224,7 @@ export async function openPaste(u: Unlocked): Promise<OpenResult> {
 
 export async function updatePaste(u: Unlocked, owner: string, plain: BodyPlain, baseVersion: number) {
   const content = toB64u(await sealJSON(u.keys.encKey, 'body', 'body', plain));
-  return api.update(u.id, owner, content, baseVersion);
+  return api.update(u.id, owner, content, baseVersion, await imageRefsFor(plain.body));
 }
 
 export async function uploadFile(u: Unlocked, auth: Auth, f: LocalFile, commentId: string | null): Promise<Attachment> {
@@ -209,13 +235,14 @@ export async function uploadFile(u: Unlocked, auth: Auth, f: LocalFile, commentI
 export async function postComment(u: Unlocked, auth: Auth, id: string, parentId: string | null, nick: string, body: string) {
   const plain: CommentPlain = { v: 1, nick, body };
   const content = toB64u(await sealJSON(u.keys.encKey, 'comment', id, plain));
-  return api.comment(u.id, { ...auth, read: u.read }, { id, parentId, content });
+  const imageRefs = await imageRefsFor(body);
+  return api.comment(u.id, { ...auth, read: u.read }, imageRefs.length ? { id, parentId, content, imageRefs } : { id, parentId, content });
 }
 
 export async function editComment(u: Unlocked, auth: Auth, c: PlainComment, nick: string, body: string) {
   const plain: CommentPlain = { v: 1, nick, body };
   const content = toB64u(await sealJSON(u.keys.encKey, 'comment', c.id, plain));
-  return api.editComment(u.id, { ...auth, read: u.read }, c.id, content, c.version);
+  return api.editComment(u.id, { ...auth, read: u.read }, c.id, content, c.version, await imageRefsFor(body));
 }
 
 /** Guest identity for this paste in this browser, created on first use. */
@@ -251,8 +278,39 @@ export class AttachmentResolver {
   private raw = new Map<string, Attachment>();
   private cache = new Map<string, Promise<ResolvedAttachment>>();
   private metaCache = new Map<string, Promise<AttMetaPlain>>();
+  private extCache = new Map<string, Promise<string>>();
+  private registered = new Set<string>();
+
+  /** Burn pastes: proxy access after the paste is gone. */
+  ticket: string | null = null;
+  /** Registers refs so remote images can be previewed before saving. */
+  registrar: ((refs: string[]) => Promise<void>) | null = null;
+  proxyEnabled: () => boolean = () => true;
 
   constructor(private u: Unlocked) {}
+
+  /** Object URL of a remote image fetched through the server's proxy. */
+  external(url: string, register = false): Promise<string> {
+    if (!this.proxyEnabled()) return Promise.reject(new ExternalDisabled());
+    let p = this.extCache.get(url);
+    if (!p) {
+      p = (async () => {
+        if (register && this.registrar) {
+          const ref = await imageRef(url);
+          if (!this.registered.has(ref)) {
+            await this.registrar([ref]);
+            this.registered.add(ref);
+          }
+        }
+        const auth: Auth = this.ticket ? { ticket: this.ticket } : { read: this.u.read };
+        const blob = await api.image(this.u.id, auth, url);
+        return URL.createObjectURL(new Blob([blob], { type: safeBlobType(blob.type) }));
+      })();
+      p.catch(() => this.extCache.delete(url));
+      this.extCache.set(url, p);
+    }
+    return p;
+  }
 
   add(list: Attachment[]) {
     for (const a of list) this.raw.set(a.id, a);
@@ -287,8 +345,7 @@ export class AttachmentResolver {
         const meta = await this.meta(id);
         const env = a.data ? fromB64u(a.data) : await api.download(this.u.id, this.u.read, id);
         const bytes = await unseal(this.u.keys.encKey, 'attdata', id, env);
-        // SVG is rendered through <img>, which never executes scripts.
-        const url = URL.createObjectURL(new Blob([bytes], { type: meta.type || 'application/octet-stream' }));
+        const url = URL.createObjectURL(new Blob([bytes], { type: safeBlobType(meta.type) }));
         return { meta, url };
       })();
       r.catch(() => this.cache.delete(id));
@@ -299,7 +356,7 @@ export class AttachmentResolver {
 
   /** Seed with a local file we just uploaded (no round-trip needed). */
   seedLocal(f: LocalFile) {
-    const url = URL.createObjectURL(new Blob([f.data], { type: f.type }));
+    const url = URL.createObjectURL(new Blob([f.data], { type: safeBlobType(f.type) }));
     const meta: AttMetaPlain = { v: 1, name: f.name, type: f.type, size: f.data.length };
     this.metaCache.set(f.id, Promise.resolve(meta));
     this.cache.set(f.id, Promise.resolve({ meta, url }));
@@ -307,6 +364,8 @@ export class AttachmentResolver {
 
   dispose() {
     for (const p of this.cache.values()) p.then((r) => URL.revokeObjectURL(r.url)).catch(() => {});
+    for (const p of this.extCache.values()) p.then((u) => URL.revokeObjectURL(u)).catch(() => {});
     this.cache.clear();
+    this.extCache.clear();
   }
 }

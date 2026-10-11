@@ -11,6 +11,7 @@ export default defineConfig({
     baseURL: process.env.HB_URL ?? 'http://127.0.0.1:8080',
     launchOptions: process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {},
     permissions: ['clipboard-read', 'clipboard-write'],
+    ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

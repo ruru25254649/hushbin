@@ -34,4 +34,5 @@ export const DEFAULT_CONFIG: ServerConfig = {
   maxAttachment: 25 * 1024 * 1024,
   maxPasteAttachments: 100 * 1024 * 1024,
   expiries: [300, 3600, 86400, 604800, 2592000, 0],
+  imageProxy: true,
 };

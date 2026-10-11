@@ -160,6 +160,9 @@ const en = {
   'shortcuts.close': 'Close dialog',
 
   'attachments.title': 'Attachments',
+  'img.pending': 'Shown via your server after the paste is created',
+  'img.failed': 'Could not load',
+  'img.disabled': 'Remote images are turned off on this server',
   'att.missing': 'Attachment unavailable',
   'diagram.error': 'Diagram error',
   'share.received': 'Shared content added.',

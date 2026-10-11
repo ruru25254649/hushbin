@@ -161,6 +161,9 @@ const zhCN: Dict = {
   'shortcuts.close': '关闭对话框',
 
   'attachments.title': '附件',
+  'img.pending': '创建后将通过你的服务器显示',
+  'img.failed': '无法加载',
+  'img.disabled': '此服务器已关闭远程图片',
   'att.missing': '附件不可用',
   'diagram.error': '图表错误',
   'share.received': '已添加分享的内容。',

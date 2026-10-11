@@ -162,6 +162,9 @@ const ja: Dict = {
   'shortcuts.close': 'ダイアログを閉じる',
 
   'attachments.title': '添付ファイル',
+  'img.pending': 'ペースト作成後にサーバー経由で表示されます',
+  'img.failed': '読み込めませんでした',
+  'img.disabled': 'このサーバーではリモート画像が無効です',
   'att.missing': '添付ファイルを利用できません',
   'diagram.error': '図のエラー',
   'share.received': '共有された内容を追加しました。',

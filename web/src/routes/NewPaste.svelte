@@ -3,7 +3,7 @@
   import Editor from '../components/Editor.svelte';
   import Icon from '../components/Icon.svelte';
   import PasswordField from '../components/PasswordField.svelte';
-  import { t } from '../lib/i18n/index.svelte';
+  import { t, renderLabels } from '../lib/i18n/index.svelte';
   import {
     prefs,
     updatePrefs,
@@ -54,13 +54,7 @@
   const context: LiveContext = {
     atts: files,
     get labels() {
-      return {
-        copy: t('copy'),
-        copied: t('copied'),
-        download: t('download'),
-        missing: t('att.missing'),
-        diagramError: t('diagram.error'),
-      };
+      return renderLabels();
     },
   };
 

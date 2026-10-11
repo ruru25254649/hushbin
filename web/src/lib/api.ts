@@ -10,6 +10,7 @@ export type ServerConfig = {
   maxAttachment: number;
   maxPasteAttachments: number;
   expiries: number[];
+  imageProxy?: boolean;
 };
 
 export type PasteHeader = {
@@ -54,6 +55,7 @@ export type OpenedPaste = {
   content: string;
   attachments: Attachment[];
   comments: Comment[];
+  imageTicket?: string | null;
 };
 
 export type VersionInfo = { version: number; createdAt: number };
@@ -69,6 +71,7 @@ export type CreateMeta = {
   ownerVerifier: string;
   content: string;
   attachments: { id: string; meta: string }[];
+  imageRefs?: string[];
 };
 
 export type LiveEvent =
@@ -95,6 +98,7 @@ export type Auth = {
   read?: string;
   owner?: string | null;
   author?: string | null;
+  ticket?: string | null;
 };
 
 function headers(auth: Auth | undefined, extra: Record<string, string> = {}): Headers {
@@ -102,6 +106,7 @@ function headers(auth: Auth | undefined, extra: Record<string, string> = {}): He
   if (auth?.read) h.set('X-Read-Auth', auth.read);
   if (auth?.owner) h.set('X-Owner-Token', auth.owner);
   if (auth?.author) h.set('X-Author-Token', auth.author);
+  if (auth?.ticket) h.set('X-Image-Ticket', auth.ticket);
   return h;
 }
 
@@ -154,10 +159,10 @@ export const api = {
   header: (id: string) => request<PasteHeader>('GET', `/pastes/${enc(id)}`),
   open: (id: string, read: string) => request<OpenedPaste>('POST', `/pastes/${enc(id)}/open`, { auth: { read } }),
 
-  update: (id: string, owner: string, content: string, baseVersion: number) =>
+  update: (id: string, owner: string, content: string, baseVersion: number, imageRefs: string[] = []) =>
     request<{ version: number; updatedAt: number }>('PUT', `/pastes/${enc(id)}`, {
       auth: { owner },
-      json: { content, baseVersion },
+      json: imageRefs.length ? { content, baseVersion, imageRefs } : { content, baseVersion },
     }),
   destroy: (id: string, owner: string) => request<void>('DELETE', `/pastes/${enc(id)}`, { auth: { owner } }),
   lock: (id: string, owner: string, locked: boolean) =>
@@ -186,10 +191,42 @@ export const api = {
     return new Uint8Array(await res.arrayBuffer());
   },
 
-  comment: (id: string, auth: Auth, body: { id: string; parentId: string | null; content: string }) =>
+  comment: (id: string, auth: Auth, body: { id: string; parentId: string | null; content: string; imageRefs?: string[] }) =>
     request<Comment>('POST', `/pastes/${enc(id)}/comments`, { auth, json: body }),
-  editComment: (id: string, auth: Auth, cid: string, content: string, baseVersion: number) =>
-    request<Comment>('PUT', `/pastes/${enc(id)}/comments/${enc(cid)}`, { auth, json: { content, baseVersion } }),
+  editComment: (id: string, auth: Auth, cid: string, content: string, baseVersion: number, imageRefs: string[] = []) =>
+    request<Comment>('PUT', `/pastes/${enc(id)}/comments/${enc(cid)}`, {
+      auth,
+      json: imageRefs.length ? { content, baseVersion, imageRefs } : { content, baseVersion },
+    }),
+
+  registerImages: (id: string, auth: Auth, imageRefs: string[]) =>
+    request<void>('POST', `/pastes/${enc(id)}/image-refs`, { auth, json: { imageRefs } }),
+
+  /** Fetch a remote image through the server's proxy (never directly). */
+  async image(id: string, auth: Auth, url: string): Promise<Blob> {
+    let res: Response;
+    try {
+      res = await fetch(`/api/pastes/${enc(id)}/image`, {
+        method: 'POST',
+        headers: headers(auth, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ url }),
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+    } catch (e) {
+      throw new ApiError(0, 'network', (e as Error).message || 'network error');
+    }
+    if (!res.ok) {
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        /* not json */
+      }
+      throw new ApiError(res.status, data?.error ?? 'http_' + res.status, data?.message ?? res.statusText);
+    }
+    return res.blob();
+  },
   deleteComment: (id: string, auth: Auth, cid: string) =>
     request<void>('DELETE', `/pastes/${enc(id)}/comments/${enc(cid)}`, { auth }),
 };
