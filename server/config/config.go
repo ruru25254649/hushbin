@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// Version is reported by GET /api/config.
-const Version = "0.1.0"
+// Version is reported by GET /api/config. Release builds override it with
+// -ldflags "-X hushbin/server/config.Version=<version>".
+var Version = "0.1.0"
 
 // Rate is a token-bucket limit: up to N events per Per, with a burst of N.
 // A zero N disables the limit.

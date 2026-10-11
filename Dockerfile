@@ -18,7 +18,9 @@ COPY cmd ./cmd
 COPY server ./server
 COPY web/embed.go ./web/embed.go
 COPY --from=web /src/web/dist ./web/dist
-RUN go build -trimpath -ldflags="-s -w" -o /out/hushbin ./cmd/hushbin \
+# Set by CI (release tag or dev-<commit>); empty keeps the version in config.go.
+ARG VERSION=""
+RUN go build -trimpath -ldflags="-s -w ${VERSION:+-X hushbin/server/config.Version=$VERSION}" -o /out/hushbin ./cmd/hushbin \
  && mkdir -p /out/data
 
 # ---- runtime --------------------------------------------------------------

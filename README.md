@@ -65,6 +65,18 @@ See [DESIGN.md](DESIGN.md) for the exact cryptography and API.
 docker compose up -d          # listens on 127.0.0.1:8080
 ```
 
+`docker-compose.yml` pulls the prebuilt x64 (`linux/amd64`) image from
+GitHub Container Registry:
+
+| Tag | Built from |
+|---|---|
+| `ghcr.io/ruru25254649/hushbin:latest` | every push to `main` |
+| `…:sha-<commit>` | that exact commit |
+| `…:1.2.3`, `…:1.2`, `…:1` | release tags `v1.2.3` |
+
+Upgrade with `docker compose pull && docker compose up -d`. To build from
+source instead, swap `image:` for `build: .` in the compose file.
+
 Put it behind your reverse proxy for TLS. A secure context (HTTPS or
 localhost) is required: browsers only expose WebCrypto there. Proxy
 snippets for Caddy and Nginx, plus every configuration variable, are in

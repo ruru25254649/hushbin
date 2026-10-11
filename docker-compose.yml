@@ -2,8 +2,11 @@
 # (see server/README.md for Caddy and Nginx snippets).
 services:
   hushbin:
-    build: .
-    image: hushbin:latest
+    # Prebuilt x64 image, published by .github/workflows/docker.yml.
+    # Pin a release (e.g. :1.0.0) instead of :latest for predictable upgrades.
+    image: ghcr.io/ruru25254649/hushbin:latest
+    # To build from source instead: comment out `image` and uncomment `build`.
+    # build: .
     restart: unless-stopped
     ports:
       # Only reachable from the host; the reverse proxy terminates TLS.
