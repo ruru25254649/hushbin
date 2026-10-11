@@ -45,7 +45,7 @@ used by the container `HEALTHCHECK`, as distroless has no shell) and
 ### Docker
 
 ```sh
-docker compose up -d --build      # see ../docker-compose.yml
+docker compose up -d              # see ../compose.yaml
 ```
 
 The image is `gcr.io/distroless/static-debian12:nonroot` running as UID

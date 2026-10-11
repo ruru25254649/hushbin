@@ -8,5 +8,5 @@ data
 *.db-shm
 /hushbin
 Dockerfile
-docker-compose.yml
+compose.yaml
 .dockerignore

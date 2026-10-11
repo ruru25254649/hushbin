@@ -65,7 +65,7 @@ See [DESIGN.md](DESIGN.md) for the exact cryptography and API.
 docker compose up -d          # listens on 127.0.0.1:8080
 ```
 
-`docker-compose.yml` pulls the prebuilt x64 (`linux/amd64`) image from
+`compose.yaml` pulls the prebuilt x64 (`linux/amd64`) image from
 GitHub Container Registry:
 
 | Tag | Built from |
