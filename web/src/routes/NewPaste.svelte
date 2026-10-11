@@ -184,6 +184,16 @@
   });
 </script>
 
+<svelte:window
+  onkeydown={(e) => {
+    // Ctrl/⌘+Enter from anywhere on the form (title, options); the editor handles its own.
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.defaultPrevented && !createdOnce) {
+      e.preventDefault();
+      create();
+    }
+  }}
+/>
+
 {#if createdOnce}
   <section class="created card">
     <div class="created-icon"><Icon name="flame" size={22} /></div>

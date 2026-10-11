@@ -8,9 +8,10 @@ import (
 )
 
 type commentCreateBody struct {
-	ID       string  `json:"id"`
-	ParentID *string `json:"parentId"`
-	Content  *string `json:"content"`
+	ID        string   `json:"id"`
+	ParentID  *string  `json:"parentId"`
+	Content   *string  `json:"content"`
+	ImageRefs []string `json:"imageRefs"`
 }
 
 // POST /api/pastes/{id}/comments
@@ -68,9 +69,14 @@ func (s *Server) handleCommentCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, aerr)
 		return
 	}
+	refs, aerr := parseImageRefs(body.ImageRefs)
+	if aerr != nil {
+		writeAPIError(w, aerr)
+		return
+	}
 	c, err := s.store.CreateComment(r.Context(), p.ID, store.NewComment{
 		ID: body.ID, ParentID: body.ParentID, Author: author,
-		Verifier: verifier(raw), Tag: authorTag(raw), Content: content,
+		Verifier: verifier(raw), Tag: authorTag(raw), Content: content, ImageRefs: refs,
 	}, isOwner, s.cfg.MaxComments)
 	if err != nil {
 		s.fail(w, r, err)
@@ -126,8 +132,13 @@ func (s *Server) handleCommentUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, aerr)
 		return
 	}
+	refs, aerr := parseImageRefs(body.ImageRefs)
+	if aerr != nil {
+		writeAPIError(w, aerr)
+		return
+	}
 	c, err := s.store.UpdateComment(r.Context(), p.ID, r.PathValue("cid"), content, *body.BaseVersion,
-		s.cfg.MaxVersions, commentAuthorizer(isOwner, authorToken(r), false))
+		s.cfg.MaxVersions, refs, commentAuthorizer(isOwner, authorToken(r), false))
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -146,6 +146,8 @@ type Store struct {
 	attDir  string
 	tmpDir  string
 	now     func() time.Time
+
+	maxImageRefs int
 }
 
 // Options configure Open.
@@ -155,9 +157,12 @@ type Options struct {
 	Now func() time.Time
 	// MaxReaders bounds the reader connection pool (default 8).
 	MaxReaders int
+	// MaxImageRefs caps the registered image references per paste
+	// (HB_MAX_IMAGE_REFS, default 200).
+	MaxImageRefs int
 }
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS pastes (
@@ -219,6 +224,14 @@ CREATE TABLE IF NOT EXISTS attachments (
 	PRIMARY KEY (paste_id, id)
 );
 CREATE INDEX IF NOT EXISTS attachments_comment ON attachments(paste_id, comment_id);
+
+-- v2: SHA-256 hashes of remote image URLs the image proxy may fetch for a
+-- paste (the URLs themselves are never stored).
+CREATE TABLE IF NOT EXISTS image_refs (
+	paste_id TEXT NOT NULL REFERENCES pastes(id) ON DELETE CASCADE,
+	hash     BLOB NOT NULL,
+	PRIMARY KEY (paste_id, hash)
+) WITHOUT ROWID;
 `
 
 // Open opens (creating if needed) the database and blob directories under
@@ -229,6 +242,9 @@ func Open(dataDir string, opts Options) (*Store, error) {
 	}
 	if opts.MaxReaders <= 0 {
 		opts.MaxReaders = 8
+	}
+	if opts.MaxImageRefs <= 0 {
+		opts.MaxImageRefs = 200
 	}
 	abs, err := filepath.Abs(dataDir)
 	if err != nil {
@@ -242,6 +258,8 @@ func Open(dataDir string, opts Options) (*Store, error) {
 		attDir:  filepath.Join(abs, "att"),
 		tmpDir:  filepath.Join(abs, "tmp"),
 		now:     opts.Now,
+
+		maxImageRefs: opts.MaxImageRefs,
 	}
 	for _, d := range []string{abs, s.attDir, s.tmpDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -473,6 +491,7 @@ type NewPaste struct {
 	ReadVerifier  []byte
 	OwnerVerifier []byte
 	Content       []byte
+	ImageRefs     [][]byte // SHA-256 hashes of remote image URLs
 }
 
 // NewBlob is an uploaded attachment waiting in a temporary file.
@@ -526,6 +545,9 @@ func (s *Store) CreatePaste(ctx context.Context, np NewPaste, blobs []NewBlob) (
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO paste_versions (paste_id, version, created_at, content)
 				VALUES (?, 1, ?, ?)`, p.ID, now, np.Content); err != nil {
+				return err
+			}
+			if err := s.addImageRefs(ctx, tx, p.ID, np.ImageRefs); err != nil {
 				return err
 			}
 			if len(blobs) == 0 {
@@ -670,6 +692,7 @@ type Burned struct {
 	Paste       *Paste
 	Content     []byte
 	Attachments []Attachment
+	ImageRefs   [][]byte // the paste's registered image refs at burn time
 	dir         string
 }
 
@@ -719,10 +742,14 @@ func (s *Store) Burn(ctx context.Context, id string) (*Burned, error) {
 				return fmt.Errorf("attachment blob %s/%s: size %d, want %d", id, a.ID, st.Size(), a.Size)
 			}
 		}
+		refs, err := listImageRefs(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM pastes WHERE id = ?`, id); err != nil {
 			return err
 		}
-		out = &Burned{Paste: p, Content: content, Attachments: atts}
+		out = &Burned{Paste: p, Content: content, Attachments: atts, ImageRefs: refs}
 		if len(atts) > 0 {
 			dst := filepath.Join(s.tmpDir, "burn-"+id+"-"+NewPasteID())
 			if err := os.Rename(s.pasteDir(id), dst); err != nil {
@@ -745,8 +772,9 @@ func (s *Store) Burn(ctx context.Context, id string) (*Burned, error) {
 	return out, nil
 }
 
-// UpdatePaste stores a new version of the paste body.
-func (s *Store) UpdatePaste(ctx context.Context, id string, content []byte, baseVersion, maxVersions int) (*Paste, error) {
+// UpdatePaste stores a new version of the paste body and registers refs
+// (image ref hashes) in the same transaction.
+func (s *Store) UpdatePaste(ctx context.Context, id string, content []byte, baseVersion, maxVersions int, refs [][]byte) (*Paste, error) {
 	var out *Paste
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		p, err := s.getPaste(ctx, tx, id)
@@ -761,6 +789,9 @@ func (s *Store) UpdatePaste(ctx context.Context, id string, content []byte, base
 		}
 		if p.Version >= maxVersions {
 			return errTooLarge("version limit reached")
+		}
+		if err := s.addImageRefs(ctx, tx, id, refs); err != nil {
+			return err
 		}
 		now := s.NowMs()
 		if now < p.UpdatedAt {
@@ -906,12 +937,13 @@ func (s *Store) SweepExpired(ctx context.Context) ([]string, error) {
 
 // NewComment is the input to CreateComment.
 type NewComment struct {
-	ID       string
-	ParentID *string
-	Author   string // "owner" | "guest"
-	Verifier []byte
-	Tag      string
-	Content  []byte
+	ID        string
+	ParentID  *string
+	Author    string // "owner" | "guest"
+	Verifier  []byte
+	Tag       string
+	Content   []byte
+	ImageRefs [][]byte
 }
 
 func (s *Store) getComment(ctx context.Context, q querier, pasteID, id string) (*Comment, error) {
@@ -972,6 +1004,9 @@ func (s *Store) CreateComment(ctx context.Context, pasteID string, nc NewComment
 		if count >= maxComments {
 			return errTooLarge("comment limit reached")
 		}
+		if err := s.addImageRefs(ctx, tx, pasteID, nc.ImageRefs); err != nil {
+			return err
+		}
 		now := s.NowMs()
 		var parent any
 		if nc.ParentID != nil {
@@ -1017,7 +1052,7 @@ func (s *Store) GetComment(ctx context.Context, pasteID, id string) (*Comment, e
 // inside the transaction with the current comment and must return an error
 // (typically ErrForbidden) to deny the edit.
 func (s *Store) UpdateComment(ctx context.Context, pasteID, id string, content []byte, baseVersion, maxVersions int,
-	authorize func(c *Comment) error) (*Comment, error) {
+	refs [][]byte, authorize func(c *Comment) error) (*Comment, error) {
 	if !ValidObjectID(id) {
 		return nil, errNotFound("comment not found")
 	}
@@ -1045,6 +1080,9 @@ func (s *Store) UpdateComment(ctx context.Context, pasteID, id string, content [
 		}
 		if c.Version >= maxVersions {
 			return errTooLarge("version limit reached")
+		}
+		if err := s.addImageRefs(ctx, tx, pasteID, refs); err != nil {
+			return err
 		}
 		now := s.NowMs()
 		if now < c.UpdatedAt {

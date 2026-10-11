@@ -214,6 +214,9 @@ type openHeadJSON struct {
 	ExpiresAt  *int64 `json:"expiresAt"`
 	Version    int    `json:"version"`
 	Content    string `json:"content"`
+	// ImageTicket is set only when a burn paste with registered image refs
+	// is opened; the key is always present.
+	ImageTicket *string `json:"imageTicket"`
 }
 
 type commentJSON struct {

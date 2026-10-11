@@ -115,7 +115,19 @@
   </div>
   <div class="bar">
     {#if !editing}
-      <input class="input nick" bind:value={nick} placeholder={t('discussion.nick')} aria-label={t('discussion.nick')} maxlength="64" />
+      <input
+        class="input nick"
+        bind:value={nick}
+        placeholder={t('discussion.nick')}
+        aria-label={t('discussion.nick')}
+        maxlength="64"
+        onkeydown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            send();
+          }
+        }}
+      />
     {/if}
     <button class="btn ghost sm icon" title={t('attach')} aria-label={t('attach')} onclick={() => fileInput.click()}><Icon name="paperclip" /></button>
     <input bind:this={fileInput} type="file" multiple hidden onchange={pick} />

@@ -81,6 +81,7 @@ test('keyboard only: create, copy link, palette, history, shortcuts', async ({ p
   await page.keyboard.press('Control+k');
   await page.keyboard.type('edit');
   await page.keyboard.press('Enter');
+  await expect(page.locator('.edit-body .cm-content')).toBeFocused();
   await page.keyboard.press('Control+End');
   await page.keyboard.insertText('\nsecond');
   await page.keyboard.press('Control+Enter');
@@ -176,7 +177,7 @@ test('typing into the editor does not get mangled by auto-pairing or list contin
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await page.keyboard.type('a [link](https://x.y) and "quotes" and (parens)');
-  await page.keyboard.press('Control+e');
-  const src = await page.locator('.sheet .cm-content').innerText();
-  expect(src.replace(/​/g, '')).toBe('- item one\n- item two\n\na [link](https://x.y) and "quotes" and (parens)');
+  // The draft mirrors the exact document text.
+  const src = await page.evaluate(() => sessionStorage.getItem('hb:draft'));
+  expect(src).toBe('- item one\n- item two\n\na [link](https://x.y) and "quotes" and (parens)');
 });

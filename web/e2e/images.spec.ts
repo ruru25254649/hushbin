@@ -16,17 +16,18 @@ test.beforeAll(async () => {
   const png = readFileSync(IMAGE);
   host = http.createServer((req, res) => {
     hits.push(req.url ?? '');
-    if (req.url === '/cat.png') {
+    const path = new URL(req.url ?? '/', 'http://x').pathname;
+    if (path === '/cat.png') {
       res.writeHead(200, { 'Content-Type': 'image/png' });
       res.end(png);
-    } else if (req.url === '/fake.png') {
+    } else if (path === '/fake.png') {
       // Claims to be a PNG but is HTML: the proxy must sniff and refuse it.
       res.writeHead(200, { 'Content-Type': 'image/png' });
       res.end('<html><script>alert(1)</script></html>');
-    } else if (req.url === '/evil.svg') {
+    } else if (path === '/evil.svg') {
       res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
       res.end('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
-    } else if (req.url === '/hop') {
+    } else if (path === '/hop') {
       res.writeHead(302, { Location: '/cat.png' });
       res.end();
     } else {
@@ -42,7 +43,13 @@ test.afterAll(() => host.close());
 
 test('remote images load through the proxy, never directly', async ({ page, browser }) => {
   const direct: string[] = [];
-  const watch = (p: typeof page) => p.on('request', (r) => r.url().startsWith(origin) && direct.push(r.url()));
+  const proxyGets: string[] = [];
+  const watch = (p: typeof page) =>
+    p.on('request', (r) => {
+      if (r.url().startsWith(origin)) direct.push(r.url());
+      if (/\/api\/pastes\/[^/]+\/image$/.test(new URL(r.url()).pathname) && r.method() !== 'POST')
+        proxyGets.push(`${r.method()} ${r.resourceType()} ${r.frame().url()}`);
+    });
   watch(page);
 
   await page.goto('/');
@@ -78,6 +85,7 @@ test('remote images load through the proxy, never directly', async ({ page, brow
   await expect(page.locator('.msg img.ext-img[alt="again"]')).toHaveJSProperty('naturalWidth', 192);
 
   expect(direct, 'browsers must never contact the image host').toEqual([]);
+  expect(proxyGets, 'the proxy is only called with POST').toEqual([]);
 
   // The proxy itself: only registered URLs, only images.
   const { id, read } = await readAuthFor(reader, link);

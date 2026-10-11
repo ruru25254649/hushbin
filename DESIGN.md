@@ -350,3 +350,29 @@ Choices the server makes where §4 is silent (the web client relies on them):
 - Event streams open with an immediate `: ping`.
 - Mermaid source travels in a text node, not an attribute: DOMPurify drops
   attribute values containing `-->`.
+- Image proxy (`/image`, `/image-refs`):
+  - Order of checks on `/image`: rate limit → auth → body → URL syntax
+    (`400 invalid`) → registration (`404 not_found`) → host allowlist
+    (`404 not_found`, before any network access) → fetch.
+  - With `X-Image-Ticket` present, read auth is not consulted. A malformed,
+    unknown or expired ticket, or one for another paste, is
+    `403 unauthorized` and does not use the failed-auth budget. `X-Read-Auth`
+    on a burn paste is `400 invalid` before auth (burn images only via the
+    ticket).
+  - URL hosts must be ASCII (punycode, as `new URL().href` produces); an
+    explicit default port (`https://x:443/`) is accepted, any other is
+    `400 invalid`.
+  - Unreachable/forbidden address, non-`200`, bad or > 3 redirects and
+    timeouts are `502 upstream`; bodies under 8 bytes are `415 not_image`.
+    `413`, `415` and `502` are cached for 5 min; `503 busy` is not.
+  - `imageRefs`: `null`/absent = none; duplicates ignored; > 100 in one
+    request → `413 too_large`; a malformed entry → `400 invalid`. Exceeding
+    `HB_MAX_IMAGE_REFS` rolls back the whole request (no new version,
+    comment or refs).
+  - `POST /image-refs`: owner token alone suffices; without one, a paste
+    without discussion answers `403 locked` before auth and a locked one
+    `403 locked` after it. A missing `imageRefs` is `400`; `[]` is `204`.
+  - `HB_IMAGE_PROXY=false`: refs are still accepted and stored;
+    `imageTicket` is always `null`. Tickets live in memory only (lost on
+    restart), at most 10 000, oldest evicted first.
+  - The fetcher's `User-Agent` is `Hushbin-ImageProxy/<version>`.

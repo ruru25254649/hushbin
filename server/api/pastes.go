@@ -154,6 +154,7 @@ type createMeta struct {
 	OwnerVerifier *string            `json:"ownerVerifier"`
 	Content       *string            `json:"content"`
 	Attachments   []createAttachment `json:"attachments"`
+	ImageRefs     []string           `json:"imageRefs"`
 }
 
 type kdfParams struct {
@@ -364,9 +365,14 @@ func (s *Server) validateCreate(m *createMeta) (*store.NewPaste, *apiError) {
 	if aerr != nil {
 		return nil, aerr
 	}
+	refs, aerr := parseImageRefs(m.ImageRefs)
+	if aerr != nil {
+		return nil, aerr
+	}
 	return &store.NewPaste{
 		Burn: *m.Burn, Discussion: *m.Discussion, ExpiresIn: *m.ExpiresIn,
 		Salt: salt, KDF: kdf, ReadVerifier: rv, OwnerVerifier: ov, Content: content,
+		ImageRefs: refs,
 	}, nil
 }
 
@@ -387,11 +393,11 @@ func (s *Server) handleHeader(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 // POST /api/pastes/{id}/open
 
-func openHead(p *store.Paste, content []byte) []byte {
+func openHead(p *store.Paste, content []byte, imageTicket *string) []byte {
 	b, _ := json.Marshal(openHeadJSON{
 		ID: p.ID, Burn: p.Burn, Discussion: p.Discussion, Locked: p.Locked,
 		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ExpiresAt: p.ExpiresAt,
-		Version: p.Version, Content: b64(content),
+		Version: p.Version, Content: b64(content), ImageTicket: imageTicket,
 	})
 	return b[:len(b)-1] // drop '}' to append the arrays
 }
@@ -436,7 +442,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		wrote = true
 		bw := bufio.NewWriterSize(w, 32<<10)
-		bw.Write(openHead(p, content))
+		bw.Write(openHead(p, content, nil))
 		bw.WriteString(`,"attachments":`)
 		bw.Write(attsJSON)
 		bw.WriteString(`,"comments":[`)
@@ -481,12 +487,19 @@ func (s *Server) openBurn(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	defer b.Cleanup()
 	s.hub.Publish(id, events.PasteDeleted, evPasteDeleted{Type: events.PasteDeleted})
+	// The paste is gone now; a ticket lets this reader still load the
+	// remote images it registered.
+	var ticket *string
+	if len(b.ImageRefs) > 0 && s.cfg.ImageProxy {
+		t := b64(s.tickets.mint(id, b.ImageRefs))
+		ticket = &t
+	}
 
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	bw := bufio.NewWriterSize(w, 64<<10)
-	bw.Write(openHead(b.Paste, b.Content))
+	bw.Write(openHead(b.Paste, b.Content, ticket))
 	bw.WriteString(`,"attachments":[`)
 	for i := range b.Attachments {
 		a := &b.Attachments[i]
@@ -528,8 +541,9 @@ func streamBase64(w io.Writer, path string) error {
 // Owner endpoints
 
 type updateBody struct {
-	Content     *string `json:"content"`
-	BaseVersion *int    `json:"baseVersion"`
+	Content     *string  `json:"content"`
+	BaseVersion *int     `json:"baseVersion"`
+	ImageRefs   []string `json:"imageRefs"`
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -551,7 +565,12 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, aerr)
 		return
 	}
-	up, err := s.store.UpdatePaste(r.Context(), p.ID, content, *body.BaseVersion, s.cfg.MaxVersions)
+	refs, aerr := parseImageRefs(body.ImageRefs)
+	if aerr != nil {
+		writeAPIError(w, aerr)
+		return
+	}
+	up, err := s.store.UpdatePaste(r.Context(), p.ID, content, *body.BaseVersion, s.cfg.MaxVersions, refs)
 	if err != nil {
 		s.fail(w, r, err)
 		return

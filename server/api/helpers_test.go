@@ -75,7 +75,7 @@ func newEnv(t *testing.T, mod func(c *config.Config), opts ...func(o *api.Option
 		mod(&cfg)
 	}
 	clock := &fakeClock{t: time.UnixMilli(1_760_000_000_000)}
-	st, err := store.Open(cfg.DataDir, store.Options{Now: clock.Now})
+	st, err := store.Open(cfg.DataDir, store.Options{Now: clock.Now, MaxImageRefs: cfg.MaxImageRefs})
 	if err != nil {
 		t.Fatal(err)
 	}

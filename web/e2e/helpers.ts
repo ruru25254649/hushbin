@@ -1,4 +1,4 @@
-import { type Page, type Browser } from '@playwright/test';
+import { test, type Page, type Browser, type BrowserContext } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -12,10 +12,18 @@ export async function typeInEditor(page: Page, scope: string, text: string) {
   await page.keyboard.insertText(text);
 }
 
+const extra: BrowserContext[] = [];
+
+/** A second browser (separate storage, like another device). Closed after each test. */
 export async function newPage(browser: Browser, opts: Parameters<Browser['newContext']>[0] = {}) {
   const ctx = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'], ignoreHTTPSErrors: true, ...opts });
+  extra.push(ctx);
   return ctx.newPage();
 }
+
+test.afterEach(async () => {
+  await Promise.all(extra.splice(0).map((c) => c.close()));
+});
 
 export async function shot(page: Page, name: string) {
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true });

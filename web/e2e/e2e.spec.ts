@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Browser } from '@playwright/test';
+import { newPage } from './helpers';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -38,10 +39,7 @@ async function typeInEditor(page: Page, scope: string, text: string) {
   await page.keyboard.insertText(text);
 }
 
-async function newContext(browser: Browser) {
-  const ctx = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
-  return ctx.newPage();
-}
+const newContext = (browser: Browser) => newPage(browser);
 
 async function shot(page: Page, name: string) {
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true });

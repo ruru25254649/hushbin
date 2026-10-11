@@ -82,3 +82,34 @@ func TestInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestImageProxyConfig(t *testing.T) {
+	c, _ := LoadFrom(env(nil))
+	if !c.ImageProxy || c.ImageProxyMaxBytes != 10485760 || c.ImageProxyCacheBytes != 67108864 ||
+		c.ImageProxyAllowPrivate || len(c.ImageProxyHosts) != 0 || c.MaxImageRefs != 200 ||
+		c.RateImage != (Rate{600, time.Hour}) {
+		t.Fatalf("defaults %+v", c)
+	}
+	c, err := LoadFrom(env(map[string]string{
+		"HB_IMAGE_PROXY":               "false",
+		"HB_IMAGE_PROXY_MAX_BYTES":     "1000",
+		"HB_IMAGE_PROXY_CACHE_BYTES":   "2000",
+		"HB_IMAGE_PROXY_HOSTS":         "Example.com, *.imgur.com ,.githubusercontent.com.",
+		"HB_IMAGE_PROXY_ALLOW_PRIVATE": "true",
+		"HB_MAX_IMAGE_REFS":            "7",
+		"HB_RATE_IMAGE":                "10/m",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageProxy || c.ImageProxyMaxBytes != 1000 || c.ImageProxyCacheBytes != 2000 || !c.ImageProxyAllowPrivate ||
+		c.MaxImageRefs != 7 || c.RateImage != (Rate{10, time.Minute}) ||
+		strings.Join(c.ImageProxyHosts, ",") != "example.com,imgur.com,githubusercontent.com" {
+		t.Fatalf("overrides %+v", c)
+	}
+	for _, bad := range []string{"bücher.de", "exa mple.com", "a..b", "a/b"} {
+		if _, err := LoadFrom(env(map[string]string{"HB_IMAGE_PROXY_HOSTS": bad})); err == nil {
+			t.Errorf("HB_IMAGE_PROXY_HOSTS=%q accepted", bad)
+		}
+	}
+}

@@ -15,6 +15,7 @@ server/events       in-process pub/sub keyed by paste ID
 server/ratelimit    per-IP token buckets
 server/clientip     client IP extraction (trusted proxies / X-Forwarded-For)
 server/static       SPA file serving and cache policy
+server/imageproxy   remote image fetcher (SSRF-safe dialer, sniffing, LRU cache)
 web/embed.go        //go:embed all:dist (the Vite build output)
 ```
 
@@ -75,6 +76,13 @@ All configuration is via environment variables. Invalid values abort startup.
 | `HB_RATE_UPLOAD` | `120/10m` | `POST /api/pastes/{id}/attachments` |
 | `HB_RATE_AUTH` | `30/10m` | **failed** read-auth / owner-token attempts |
 | `HB_RATE_GENERAL` | `600/m` | every `/api/*` request |
+| `HB_RATE_IMAGE` | `600/h` | every `POST /api/pastes/{id}/image` |
+| `HB_IMAGE_PROXY` | `true` | enable the remote image proxy (`false` → `/image` and `/image-refs` are `404`; refs are still accepted and stored) |
+| `HB_IMAGE_PROXY_MAX_BYTES` | `10485760` | largest image fetched |
+| `HB_IMAGE_PROXY_CACHE_BYTES` | `67108864` | in-memory image cache budget |
+| `HB_IMAGE_PROXY_HOSTS` | *(empty = any public host)* | comma-separated domain suffixes (`example.com` also matches `i.example.com`); ASCII/punycode only |
+| `HB_IMAGE_PROXY_ALLOW_PRIVATE` | `false` | **testing only**: lift the address and port checks (logged as a warning at startup) |
+| `HB_MAX_IMAGE_REFS` | `200` | registered image refs per paste → `413` |
 | `HB_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `HB_LOG_FORMAT` | `text` | `text` or `json` (log/slog) |
 
@@ -112,6 +120,54 @@ malformed entry stops the walk (the last trusted hop is used). Without
 When the proxy reaches hushbin through Docker's port publishing, the peer
 hushbin sees is the Docker bridge gateway (e.g. `172.17.0.1`) — include it
 (the compose example trusts `172.16.0.0/12`).
+
+### Image proxy
+
+Readers never load remote Markdown images themselves (that would reveal
+their IP to the image host); the server fetches them via
+`POST /api/pastes/{id}/image`. Because anyone can create a paste, the
+proxy is built so it cannot be used as a general-purpose proxy or to reach
+the server's own network:
+
+1. **Only registered URLs.** Clients register `b64u(SHA-256(url))` refs with
+   the paste (on create, edit, comment create/edit, or
+   `POST /api/pastes/{id}/image-refs`). A fetch hashes the exact URL string
+   it receives; unregistered → `404`. The server stores hashes, never URLs.
+   Refs are unioned per paste and capped (`HB_MAX_IMAGE_REFS`), and every
+   fetch needs read auth for that paste (or a burn ticket), so a paste is
+   not a free-form "fetch anything" endpoint.
+2. **URL rules.** `http`/`https` only, ≤ 2048 bytes, a non-empty ASCII host,
+   no userinfo, default ports only; optional host allowlist
+   (`HB_IMAGE_PROXY_HOSTS`). The same rules are re-applied to every redirect
+   (at most 3).
+3. **Address rules at connect time.** A `net.Dialer` `Control` hook sees the
+   *resolved* address of every connection (initial request, redirects,
+   happy-eyeballs fallbacks) and refuses anything but public unicast on port
+   80/443: loopback, RFC 1918/ULA, link-local (incl. cloud metadata
+   `169.254.169.254`), CGNAT, multicast, unspecified, documentation,
+   benchmarking and reserved ranges, NAT64 / IPv4-compatible / IPv4-mapped
+   forms, 6to4 with a non-public embedded address, and anything outside
+   `2000::/3` for IPv6. Because the check runs after DNS resolution, DNS
+   rebinding cannot bypass it. `HTTP(S)_PROXY` is ignored.
+4. **Only images come back.** `GET` with no cookies, no Referer,
+   `User-Agent: Hushbin-ImageProxy/<version>`, `Accept: image/*`; 5 s
+   connect/TLS/headers, 10 s total. The status must be `200`, the body at
+   most `HB_IMAGE_PROXY_MAX_BYTES`, and its magic bytes must identify PNG,
+   JPEG, GIF, WebP, BMP or AVIF (upstream `Content-Type` is ignored; SVG and
+   HTML are refused with `415`). Responses carry the sniffed type,
+   `Cache-Control: private, max-age=3600`, `X-Content-Type-Options: nosniff`
+   and `Content-Security-Policy: default-src 'none'; sandbox`.
+5. **Bounded cost.** At most 8 upstream fetches at once (`503 busy` after 5 s),
+   identical concurrent requests share one fetch, an LRU cache
+   (`HB_IMAGE_PROXY_CACHE_BYTES`, 1 h; failures 5 min), and a per-IP limit
+   (`HB_RATE_IMAGE`).
+
+Burn pastes are deleted when opened, so the open response carries an
+`imageTicket` (32 random bytes, in memory for 15 minutes, at most 10 000
+live tickets, oldest evicted first) bound to the paste id and a snapshot of
+its refs; it is presented as `X-Image-Ticket`.
+
+Image URLs are user content and are logged only at `debug` level.
 
 ## Reverse proxy
 
@@ -158,7 +214,7 @@ Docker bridge range (Caddy in a container).
 ```nginx
 server {
     listen 443 ssl;
-    http2 on;
+    http2 on;                    # nginx < 1.25.1: drop this line, use "listen 443 ssl http2;"
     server_name paste.example.com;
     # ssl_certificate / ssl_certificate_key ...
 
@@ -203,7 +259,8 @@ $HB_DATA_DIR/tmp/              uploads in flight; cleaned at startup and hourly
 ```
 
 Tables: `pastes`, `paste_versions`, `comments`, `comment_versions`,
-`attachments`. Blobs are written to `tmp/`, fsynced and renamed into place;
+`attachments`, `image_refs` (schema v2; v1 databases are migrated on
+start). Blobs are written to `tmp/`, fsynced and renamed into place;
 deleting a paste, comment or expired paste removes them. At startup,
 leftover temp files and blob directories without a paste are removed.
 

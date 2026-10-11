@@ -68,7 +68,7 @@ func run() error {
 	log := newLogger(cfg)
 	slog.SetDefault(log)
 
-	st, err := store.Open(cfg.DataDir, store.Options{})
+	st, err := store.Open(cfg.DataDir, store.Options{MaxImageRefs: cfg.MaxImageRefs})
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}

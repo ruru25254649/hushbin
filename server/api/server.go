@@ -20,6 +20,7 @@ import (
 	"hushbin/server/clientip"
 	"hushbin/server/config"
 	"hushbin/server/events"
+	"hushbin/server/imageproxy"
 	"hushbin/server/ratelimit"
 	"hushbin/server/static"
 	"hushbin/server/store"
@@ -49,14 +50,16 @@ type Options struct {
 	Now    func() time.Time // optional clock for rate limiters
 	// PingInterval overrides the SSE keep-alive interval (tests).
 	PingInterval time.Duration
+	// ImageProxy overrides the image fetcher built from Config (tests).
+	ImageProxy *imageproxy.Proxy
 }
 
 type limiters struct {
-	create, comment, upload, auth, general *ratelimit.Limiter
+	create, comment, upload, auth, general, image *ratelimit.Limiter
 }
 
 func (l *limiters) all() []*ratelimit.Limiter {
-	return []*ratelimit.Limiter{l.create, l.comment, l.upload, l.auth, l.general}
+	return []*ratelimit.Limiter{l.create, l.comment, l.upload, l.auth, l.general, l.image}
 }
 
 // Server is the HTTP handler.
@@ -72,6 +75,9 @@ type Server struct {
 
 	streamsMu sync.Mutex
 	streams   map[string]int
+
+	img     *imageproxy.Proxy
+	tickets *ticketStore
 }
 
 // New builds the HTTP handler. spa is the built frontend (the contents of
@@ -103,9 +109,26 @@ func New(opts Options, spa fs.FS) *Server {
 			upload:  mk(c.RateUpload),
 			auth:    mk(c.RateAuth),
 			general: mk(c.RateGeneral),
+			image:   mk(c.RateImage),
 		},
 		ping:    opts.PingInterval,
 		streams: make(map[string]int),
+		img:     opts.ImageProxy,
+		tickets: newTicketStore(maxImageTickets, ticketTTL, opts.Now),
+	}
+	if s.img == nil {
+		s.img = imageproxy.New(imageproxy.Config{
+			MaxBytes:     c.ImageProxyMaxBytes,
+			CacheBytes:   c.ImageProxyCacheBytes,
+			Hosts:        c.ImageProxyHosts,
+			AllowPrivate: c.ImageProxyAllowPrivate,
+			UserAgent:    "Hushbin-ImageProxy/" + config.Version,
+			Now:          opts.Now,
+			Logger:       opts.Logger,
+		})
+	}
+	if c.ImageProxy && c.ImageProxyAllowPrivate {
+		s.log.Warn("HB_IMAGE_PROXY_ALLOW_PRIVATE is set: the image proxy may reach private and loopback addresses on any port; use for local testing only")
 	}
 
 	mux := http.NewServeMux()
@@ -125,6 +148,8 @@ func New(opts Options, spa fs.FS) *Server {
 	mux.HandleFunc("DELETE /api/pastes/{id}/comments/{cid}", s.handleCommentDelete)
 	mux.HandleFunc("GET /api/pastes/{id}/comments/{cid}/versions", s.handleCommentVersions)
 	mux.HandleFunc("GET /api/pastes/{id}/events", s.handleEvents)
+	mux.HandleFunc("POST /api/pastes/{id}/image-refs", s.handleImageRefs)
+	mux.HandleFunc("POST /api/pastes/{id}/image", s.handleImage)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, codeNotFound, "no such endpoint")
 	})
@@ -158,6 +183,8 @@ func (s *Server) Run(ctx context.Context) {
 		for _, l := range s.lim.all() {
 			l.Sweep()
 		}
+		s.tickets.sweep()
+		s.img.Sweep()
 		if n%60 == 0 {
 			if err := s.store.CleanTemp(time.Hour); err != nil {
 				s.log.Warn("temp cleanup failed", "err", err)
@@ -348,6 +375,7 @@ type configJSON struct {
 	MaxAttachment       int64   `json:"maxAttachment"`
 	MaxPasteAttachments int64   `json:"maxPasteAttachments"`
 	Expiries            []int64 `json:"expiries"`
+	ImageProxy          bool    `json:"imageProxy"`
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +386,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		MaxAttachment:       s.cfg.MaxAttachment,
 		MaxPasteAttachments: s.cfg.MaxPasteAttachments,
 		Expiries:            s.cfg.Expiries(),
+		ImageProxy:          s.cfg.ImageProxy,
 	})
 }
 

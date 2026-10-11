@@ -51,11 +51,20 @@ type Config struct {
 	MaxComments        int   // comments per paste (tombstones included)
 	MaxStreamsPerIP    int   // concurrent event streams per client IP
 
+	// Remote image proxy (DESIGN.md §4 "Remote image proxy").
+	ImageProxy             bool     // HB_IMAGE_PROXY
+	ImageProxyMaxBytes     int64    // HB_IMAGE_PROXY_MAX_BYTES
+	ImageProxyCacheBytes   int64    // HB_IMAGE_PROXY_CACHE_BYTES
+	ImageProxyHosts        []string // HB_IMAGE_PROXY_HOSTS: lowercase domain suffixes; empty = any public host
+	ImageProxyAllowPrivate bool     // HB_IMAGE_PROXY_ALLOW_PRIVATE: testing only
+	MaxImageRefs           int      // HB_MAX_IMAGE_REFS, per paste
+
 	RateCreate  Rate
 	RateComment Rate
 	RateUpload  Rate
 	RateAuth    Rate // failed read-auth / owner-auth attempts
 	RateGeneral Rate // every /api request
+	RateImage   Rate // POST /api/pastes/{id}/image
 
 	LogLevel  string
 	LogFormat string
@@ -64,25 +73,30 @@ type Config struct {
 // Default returns the built-in defaults.
 func Default() Config {
 	return Config{
-		Addr:                ":8080",
-		DataDir:             "/data",
-		MaxBody:             2097152,
-		MaxComment:          262144,
-		MaxAttachment:       26214400,
-		MaxPasteAttachments: 104857600,
-		MaxVersions:         200,
-		AllowNever:          true,
-		MaxAttachmentMeta:   16384,
-		MaxAttachmentCount:  500,
-		MaxComments:         1000,
-		MaxStreamsPerIP:     16,
-		RateCreate:          Rate{N: 60, Per: time.Hour},
-		RateComment:         Rate{N: 60, Per: 10 * time.Minute},
-		RateUpload:          Rate{N: 120, Per: 10 * time.Minute},
-		RateAuth:            Rate{N: 30, Per: 10 * time.Minute},
-		RateGeneral:         Rate{N: 600, Per: time.Minute},
-		LogLevel:            "info",
-		LogFormat:           "text",
+		Addr:                 ":8080",
+		DataDir:              "/data",
+		MaxBody:              2097152,
+		MaxComment:           262144,
+		MaxAttachment:        26214400,
+		MaxPasteAttachments:  104857600,
+		MaxVersions:          200,
+		AllowNever:           true,
+		MaxAttachmentMeta:    16384,
+		MaxAttachmentCount:   500,
+		MaxComments:          1000,
+		MaxStreamsPerIP:      16,
+		ImageProxy:           true,
+		ImageProxyMaxBytes:   10 << 20,
+		ImageProxyCacheBytes: 64 << 20,
+		MaxImageRefs:         200,
+		RateCreate:           Rate{N: 60, Per: time.Hour},
+		RateComment:          Rate{N: 60, Per: 10 * time.Minute},
+		RateUpload:           Rate{N: 120, Per: 10 * time.Minute},
+		RateAuth:             Rate{N: 30, Per: 10 * time.Minute},
+		RateGeneral:          Rate{N: 600, Per: time.Minute},
+		RateImage:            Rate{N: 600, Per: time.Hour},
+		LogLevel:             "info",
+		LogFormat:            "text",
 	}
 }
 
@@ -184,6 +198,19 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	rate("HB_RATE_UPLOAD", &c.RateUpload)
 	rate("HB_RATE_AUTH", &c.RateAuth)
 	rate("HB_RATE_GENERAL", &c.RateGeneral)
+	rate("HB_RATE_IMAGE", &c.RateImage)
+	boolean("HB_IMAGE_PROXY", &c.ImageProxy)
+	posInt64("HB_IMAGE_PROXY_MAX_BYTES", &c.ImageProxyMaxBytes)
+	posInt64("HB_IMAGE_PROXY_CACHE_BYTES", &c.ImageProxyCacheBytes)
+	boolean("HB_IMAGE_PROXY_ALLOW_PRIVATE", &c.ImageProxyAllowPrivate)
+	posInt("HB_MAX_IMAGE_REFS", &c.MaxImageRefs)
+	if v, ok := get("HB_IMAGE_PROXY_HOSTS"); ok {
+		h, err := ParseHostSuffixes(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("HB_IMAGE_PROXY_HOSTS: %v", err))
+		}
+		c.ImageProxyHosts = h
+	}
 	str("HB_LOG_LEVEL", &c.LogLevel)
 	str("HB_LOG_FORMAT", &c.LogFormat)
 
@@ -276,6 +303,32 @@ func ParsePrefixes(s string) ([]netip.Prefix, error) {
 		}
 		a = a.Unmap()
 		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
+}
+
+// ParseHostSuffixes parses a comma-separated list of domain suffixes
+// ("example.com", ".example.com" and "*.example.com" are equivalent). Hosts
+// must be ASCII (use punycode for internationalized names).
+func ParseHostSuffixes(s string) ([]string, error) {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		h := strings.ToLower(strings.TrimSpace(part))
+		h = strings.TrimPrefix(h, "*")
+		h = strings.Trim(h, ".")
+		if h == "" {
+			continue
+		}
+		for i := 0; i < len(h); i++ {
+			c := h[i]
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '.') {
+				return nil, fmt.Errorf("bad host suffix %q (ASCII letters, digits, '-' and '.' only; use punycode)", part)
+			}
+		}
+		if strings.Contains(h, "..") {
+			return nil, fmt.Errorf("bad host suffix %q", part)
+		}
+		out = append(out, h)
 	}
 	return out, nil
 }

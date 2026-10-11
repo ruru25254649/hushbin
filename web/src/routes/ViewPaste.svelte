@@ -415,6 +415,11 @@
   });
 
   function onKey(e: KeyboardEvent) {
+    if (editing && (e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.defaultPrevented) {
+      e.preventDefault();
+      saveEdit();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c' && phase === 'ready' && store && !store.burn) {
       e.preventDefault();
       copy(link());

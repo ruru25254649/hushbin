@@ -50,6 +50,26 @@ const highlight = HighlightStyle.define([
   { tag: t.special(t.content), color: 'var(--syn-number)' },
 ]);
 
+/**
+ * Enter on an empty top-level list item leaves the list *and* starts a new
+ * paragraph. (The default only removes the marker, so the next line would be
+ * a lazy continuation of the previous item.)
+ */
+function exitEmptyListItem(view: EditorView): boolean {
+  const sel = view.state.selection.main;
+  if (!sel.empty) return false;
+  const line = view.state.doc.lineAt(sel.head);
+  if (sel.head !== line.to || line.number === 1) return false;
+  if (!/^([-*+]|\d+[.)])[ \t]+(\[[ xX]\][ \t]*)?$/.test(line.text)) return false;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: '\n' },
+    selection: { anchor: line.from + 1 },
+    scrollIntoView: true,
+    userEvent: 'input',
+  });
+  return true;
+}
+
 export type EditorHandle = {
   view: EditorView;
   getValue(): string;
@@ -103,6 +123,7 @@ export function createEditor(parent: HTMLElement, opts: EditorOptions): EditorHa
       keymap.of([
         { key: 'Mod-Enter', run: () => (opts.onSubmit?.(), true) },
         { key: 'Mod-e', run: () => (opts.onToggleMode?.(), true) },
+        { key: 'Enter', run: exitEmptyListItem },
         ...markdownKeymap,
         ...closeBracketsKeymap,
         ...defaultKeymap,

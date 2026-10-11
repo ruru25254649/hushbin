@@ -41,9 +41,17 @@ files, get a link, and share it. The server only ever stores ciphertext.
   being tried offline, and a wrong password never burns a *Send once* paste.
 - *Keep* pastes ask for a password by default. You can switch it off for a
   single paste after a warning.
-- Rendered Markdown is sanitized, raw HTML is never rendered, remote images
-  are not loaded (they would leak the reader's IP), and a strict Content
-  Security Policy blocks inline scripts.
+- Remote images in Markdown are fetched by your server, never by readers
+  (that would leak their IP to the image host). The proxy is not an open
+  proxy: it only fetches URLs registered with a paste (as hashes), only for
+  someone who can read that paste, only from public addresses on ports
+  80/443 (checked at connect time, on every redirect), and only returns
+  bytes that really are PNG/JPEG/GIF/WebP/AVIF/BMP — never SVG or HTML.
+  Size, time, rate and concurrency limits apply. See
+  [server/README.md](server/README.md#image-proxy).
+- Rendered Markdown is sanitized, raw HTML is never rendered, blob URLs only
+  ever carry raster image types, and a strict Content Security Policy blocks
+  inline scripts.
 
 What it does **not** protect against: like every web-based E2E tool, you
 trust the server to deliver honest JavaScript. If the server is compromised,
@@ -81,8 +89,12 @@ Checks:
 ```sh
 go vet ./... && go test -race ./server/...
 cd web && npm run check && npm test
-# end-to-end, against a running server:
+# end-to-end, against a running server. The image-proxy tests serve their
+# fake image host on 127.0.0.1, so start that server with
+# HB_IMAGE_PROXY_ALLOW_PRIVATE=true (never in production):
 cd web && HB_URL=http://127.0.0.1:8080 npx playwright test
+# behind an HTTPS reverse proxy with a self-signed test certificate:
+cd web && HB_URL=https://localhost:8443 HB_TRUSTED_CERT=1 npx playwright test
 ```
 
 ## Layout

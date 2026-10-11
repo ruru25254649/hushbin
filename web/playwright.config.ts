@@ -9,7 +9,11 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: process.env.HB_URL ?? 'http://127.0.0.1:8080',
-    launchOptions: process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {},
+    launchOptions: {
+      ...(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}),
+      // Lets service workers register behind a self-signed test certificate.
+      args: process.env.HB_TRUSTED_CERT ? ['--ignore-certificate-errors'] : [],
+    },
     permissions: ['clipboard-read', 'clipboard-write'],
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',

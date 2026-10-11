@@ -243,7 +243,7 @@ func TestCommentRules(t *testing.T) {
 		Verifier: rnd(32), Tag: "x", Content: rnd(40)}, false, 100); !IsCode(err, CodeInvalid) {
 		t.Fatalf("reply to reply: %v", err)
 	}
-	if _, err := s.UpdateComment(ctx, p.ID, top.ID, rnd(40), 1, 10, func(*Comment) error { return ErrForbidden }); !IsCode(err, CodeForbidden) {
+	if _, err := s.UpdateComment(ctx, p.ID, top.ID, rnd(40), 1, 10, nil, func(*Comment) error { return ErrForbidden }); !IsCode(err, CodeForbidden) {
 		t.Fatalf("authorize not honoured: %v", err)
 	}
 	res, err := s.DeleteComment(ctx, p.ID, top.ID, allow)
@@ -263,5 +263,85 @@ func TestCommentRules(t *testing.T) {
 	s.r.QueryRow("SELECT COUNT(*) FROM comments").Scan(&left)
 	if left != 0 {
 		t.Fatalf("%d comments left", left)
+	}
+}
+
+func TestImageRefs(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, Options{MaxImageRefs: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	r1, r2, r3, r4 := rnd(32), rnd(32), rnd(32), rnd(32)
+	np := newPaste(false, 0)
+	np.ImageRefs = [][]byte{r1, r1}
+	p, err := s.CreatePaste(ctx, np, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.HasImageRef(ctx, p.ID, r1); !ok {
+		t.Fatal("ref not stored")
+	}
+	if _, err := s.UpdatePaste(ctx, p.ID, rnd(40), 1, 10, [][]byte{r2, r3, r4}); !IsCode(err, CodeTooLarge) {
+		t.Fatalf("over cap: %v", err)
+	}
+	if n, _ := s.ImageRefCount(ctx, p.ID); n != 1 {
+		t.Fatalf("partial write: %d refs", n)
+	}
+	if got, _ := s.GetPaste(ctx, p.ID); got.Version != 1 {
+		t.Fatal("rejected update changed the paste")
+	}
+	if err := s.AddImageRefs(ctx, p.ID, [][]byte{r1, r2, r3}, func(*Paste) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddImageRefs(ctx, p.ID, [][]byte{r4}, func(*Paste) error { return ErrLocked("x") }); !IsCode(err, CodeLocked) {
+		t.Fatalf("authorize ignored: %v", err)
+	}
+	if err := s.AddImageRefs(ctx, p.ID, [][]byte{{1, 2}}, func(*Paste) error { return nil }); !IsCode(err, CodeInvalid) {
+		t.Fatalf("short ref accepted: %v", err)
+	}
+	// Burn snapshot, then cascade on delete.
+	bp := newPaste(true, 0)
+	bp.ImageRefs = [][]byte{r4}
+	b, _ := s.CreatePaste(ctx, bp, nil)
+	burned, err := s.Burn(ctx, b.ID)
+	if err != nil || len(burned.ImageRefs) != 1 {
+		t.Fatalf("burn refs %v %v", burned, err)
+	}
+	if err := s.DeletePaste(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	s.r.QueryRow("SELECT COUNT(*) FROM image_refs").Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d refs survived their pastes", left)
+	}
+	s.Close()
+}
+
+func TestMigrateV1(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Turn it into a v1 database.
+	if _, err := s.w.Exec("DROP TABLE image_refs; PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var v int
+	s.r.QueryRow("PRAGMA user_version").Scan(&v)
+	if v != 2 {
+		t.Fatalf("user_version %d", v)
+	}
+	if _, err := s.ImageRefCount(context.Background(), "AAAAAAAAAA"); err != nil {
+		t.Fatalf("image_refs missing after migration: %v", err)
 	}
 }
