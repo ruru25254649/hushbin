@@ -6,7 +6,9 @@ import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { IMAGE, newPage, typeInEditor, createOpenPaste, readAuthFor, shot } from './helpers';
+import { IMAGE, newPage, typeInEditor, createOpenPaste, readAuthFor, shot, closeExtraPages } from './helpers';
+
+test.afterEach(closeExtraPages);
 
 let host: http.Server;
 let origin = '';

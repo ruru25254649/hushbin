@@ -70,6 +70,7 @@
   let editBase = 0;
   let editor = $state<EditorHandle>();
   let editFiles = $state<LocalFiles | null>(null);
+  const editUploaded = new Set<string>();
   let editFileInput = $state<HTMLInputElement>();
 
   let unsubscribe: (() => void) | null = null;
@@ -296,6 +297,7 @@
     editBody = store.plain.body;
     editBase = store.version;
     editFiles = new LocalFiles(store.atts, true);
+    editUploaded.clear();
     editing = true;
   }
 
@@ -310,7 +312,9 @@
     saving = true;
     try {
       for (const f of editFiles?.referenced(editBody) ?? []) {
+        if (editUploaded.has(f.id)) continue; // already sent by an earlier, failed save
         await uploadFile(store.u, { owner }, f, null);
+        editUploaded.add(f.id);
         store.atts.add(f);
       }
       const plain: BodyPlain = { v: 1, title: editTitle.trim(), body: editBody };

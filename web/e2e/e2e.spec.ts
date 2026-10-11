@@ -1,7 +1,9 @@
 import { test, expect, type Page, type Browser } from '@playwright/test';
-import { newPage } from './helpers';
+import { newPage, closeExtraPages } from './helpers';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+
+test.afterEach(closeExtraPages);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const IMAGE = path.resolve(here, '../public/icon-192.png');

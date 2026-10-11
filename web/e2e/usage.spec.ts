@@ -3,7 +3,9 @@
 
 import { test, expect, devices } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { IMAGE, newPage, typeInEditor, createOpenPaste, shot } from './helpers';
+import { IMAGE, newPage, typeInEditor, createOpenPaste, shot, closeExtraPages } from './helpers';
+
+test.afterEach(closeExtraPages);
 
 const png = readFileSync(IMAGE).toString('base64');
 
@@ -180,4 +182,62 @@ test('typing into the editor does not get mangled by auto-pairing or list contin
   // The draft mirrors the exact document text.
   const src = await page.evaluate(() => sessionStorage.getItem('hb:draft'));
   expect(src).toBe('- item one\n- item two\n\na [link](https://x.y) and "quotes" and (parens)');
+});
+
+test('attaching is discoverable: hint, choose files, drop anywhere on the sheet', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.paste-hint')).toContainText('Paste a screenshot with');
+  await expect(page.getByRole('button', { name: 'Attach files' })).toContainText('Attach');
+
+  // "Choose files" opens the system file picker.
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByRole('button', { name: 'Choose files' }).click()]);
+  await chooser.setFiles(IMAGE);
+  await expect(page.locator('.sheet .cm-lp-image img')).toHaveCount(1);
+
+  // Dragging files over the sheet shows the drop overlay; dropping outside the
+  // editor text (here: on the hint line) still attaches.
+  const dt = await page.evaluateHandle((b64) => {
+    const d = new DataTransfer();
+    d.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], 'second.png', { type: 'image/png' }));
+    return d;
+  }, png);
+  const hint = page.locator('.paste-hint');
+  await hint.dispatchEvent('dragenter', { dataTransfer: dt });
+  await expect(page.locator('.sheet .overlay')).toContainText('Drop to attach');
+  await hint.dispatchEvent('dragover', { dataTransfer: dt });
+  await hint.dispatchEvent('drop', { dataTransfer: dt });
+  await expect(page.locator('.sheet .overlay')).toHaveCount(0);
+  await expect(page.locator('.sheet .cm-lp-image img')).toHaveCount(2);
+});
+
+test('a failed send can be retried without re-uploading its images', async ({ page, browser }) => {
+  const link = await createOpenPaste(page, 'discussion here', { discussion: true });
+  const reader = await newPage(browser);
+  await reader.goto(link);
+
+  const uploads: string[] = [];
+  reader.on('request', (r) => r.method() === 'POST' && r.url().endsWith('/attachments') && uploads.push(r.url()));
+  // The first comment POST fails (e.g. a network blip) after the image uploaded.
+  let failOnce = true;
+  await reader.route('**/api/pastes/*/comments', (route) => {
+    if (route.request().method() === 'POST' && failOnce) {
+      failOnce = false;
+      return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom","message":"boom"}' });
+    }
+    return route.continue();
+  });
+
+  await reader.locator('.new .cm-content').click();
+  await reader.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+  }, png);
+  await reader.keyboard.press('Control+V');
+  await reader.keyboard.insertText('with a picture');
+  await reader.locator('.new').getByRole('button', { name: 'Send' }).click();
+  await expect(reader.getByText('Something went wrong', { exact: false })).toBeVisible();
+
+  await reader.locator('.new').getByRole('button', { name: 'Send' }).click();
+  await expect(page.locator('.msg').filter({ hasText: 'with a picture' }).locator('img.att-img')).toHaveJSProperty('naturalWidth', 192);
+  expect(uploads).toHaveLength(1);
 });

@@ -3,6 +3,7 @@
   import Editor from '../components/Editor.svelte';
   import Icon from '../components/Icon.svelte';
   import PasswordField from '../components/PasswordField.svelte';
+  import DropZone from '../components/DropZone.svelte';
   import { t, renderLabels } from '../lib/i18n/index.svelte';
   import {
     prefs,
@@ -70,6 +71,11 @@
     const list = Array.from(fileInput.files ?? []);
     fileInput.value = '';
     if (!list.length) return;
+    const snippets = await addFiles(list);
+    if (snippets.length) editor?.insert(snippets.join('\n'));
+  }
+
+  async function dropFiles(list: File[]) {
     const snippets = await addFiles(list);
     if (snippets.length) editor?.insert(snippets.join('\n'));
   }
@@ -211,6 +217,7 @@
   </section>
 {:else}
   <section class="sheet card">
+    <DropZone ondropfiles={dropFiles} label={t('attach.drop')}>
     <div class="sheet-head">
       <input class="title" bind:value={title} placeholder={t('new.title')} aria-label={t('new.title')} maxlength="200" />
       <div class="tools">
@@ -218,7 +225,9 @@
           <button class:on={prefs.editor === 'live'} aria-pressed={prefs.editor === 'live'} onclick={() => updatePrefs({ editor: 'live' })}>{t('mode.live')}</button>
           <button class:on={prefs.editor === 'source'} aria-pressed={prefs.editor === 'source'} onclick={() => updatePrefs({ editor: 'source' })}>{t('mode.source')}</button>
         </div>
-        <button class="btn ghost sm icon" title={t('attach')} aria-label={t('attach')} onclick={() => fileInput.click()}><Icon name="paperclip" /></button>
+        <button class="btn ghost sm attach" title={t('attach')} aria-label={t('attach')} onclick={() => fileInput.click()}>
+          <Icon name="paperclip" /><span class="lbl">{t('attach.short')}</span>
+        </button>
         <input bind:this={fileInput} type="file" multiple hidden onchange={pickFiles} />
       </div>
     </div>
@@ -237,6 +246,13 @@
         onfiles={addFiles}
       />
     </div>
+    <div class="paste-hint">
+      <Icon name="image" />
+      <span class="hint-keys">{t('attach.hint', { key: `${modKey}+V` })}</span>
+      <span class="hint-touch">{t('attach.hintTouch')}</span>
+      <button class="linkbtn" onclick={() => fileInput.click()}>{t('attach.choose')}</button>
+    </div>
+    </DropZone>
   </section>
 
   <section class="opts card">
@@ -323,6 +339,39 @@
   .sheet-body {
     padding: 10px 18px 6px;
     min-height: 280px;
+  }
+  .paste-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 18px 10px;
+    border-top: 1px dashed var(--border);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .paste-hint .linkbtn {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 13px;
+    padding: 0 2px;
+  }
+  .paste-hint .linkbtn:hover {
+    text-decoration: underline;
+  }
+  .hint-touch {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .hint-keys {
+      display: none;
+    }
+    .hint-touch {
+      display: inline;
+    }
+  }
+  .attach .lbl {
+    font-size: 13px;
   }
 
   .seg {
@@ -501,6 +550,12 @@
   @media (max-width: 560px) {
     .sheet-body {
       padding: 8px 12px 4px;
+    }
+    .paste-hint {
+      padding: 8px 12px 10px;
+    }
+    .attach .lbl {
+      display: none;
     }
     .sheet-head {
       padding-left: 12px;
