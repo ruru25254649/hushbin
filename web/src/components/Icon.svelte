@@ -31,6 +31,7 @@
     code: 'M8 8l-4 4 4 4M16 8l4 4-4 4M14 4l-4 16',
     file: 'M6 3h8l4 4v14H6zM14 3v4h4',
     alert: 'M12 4l9 16H3zM12 10v4M12 17h.01',
+    image: 'M4 5h16v14H4zM4 16l4.5-4.5 4 4 3-3L20 17M15.5 9.5h.01',
   };
 </script>
 

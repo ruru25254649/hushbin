@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import Editor from './Editor.svelte';
   import Icon from './Icon.svelte';
+  import DropZone from './DropZone.svelte';
   import { t, renderLabels } from '../lib/i18n/index.svelte';
   import { prefs, updatePrefs, server, toast, toastError, modKey } from '../lib/ui.svelte';
   import { attachmentMarkdown, uploadFile, type PlainComment } from '../lib/paste';
@@ -57,6 +58,11 @@
     return files.map(attachmentMarkdown);
   }
 
+  async function dropFiles(list: File[]) {
+    const s = await addFiles(list);
+    if (s.length) editor?.insert(s.join('\n'));
+  }
+
   async function pick() {
     const list = Array.from(fileInput.files ?? []);
     fileInput.value = '';
@@ -64,13 +70,21 @@
     if (s.length) editor?.insert(s.join('\n'));
   }
 
+  // Kept across retries: if posting fails after the files were uploaded, a
+  // retry must neither re-upload them (the server rejects duplicate IDs) nor
+  // pick a new comment ID (the uploads are linked to this one).
+  let pendingId: string | null = null;
+  const uploaded = new Set<string>();
+
   async function send() {
     if (busy || !body.trim()) return;
     busy = true;
     try {
-      const commentId = editing?.id ?? newId();
+      const commentId = editing?.id ?? (pendingId ??= newId());
       for (const f of staged.referenced(body)) {
+        if (uploaded.has(f.id)) continue;
         await uploadFile(store.u, auth, f, commentId);
+        uploaded.add(f.id);
         store.atts.add(f);
       }
       const n = nick.trim().slice(0, 64);
@@ -79,6 +93,8 @@
       await onsubmit(body, n, commentId);
       body = '';
       staged.files.clear();
+      uploaded.clear();
+      pendingId = null;
     } catch (e) {
       toastError(e);
     } finally {
@@ -98,6 +114,7 @@
       <span>{t('discussion.replyTo', { name: replyTo.nick || t('discussion.anon') })}</span>
     </div>
   {/if}
+  <DropZone ondropfiles={dropFiles} label={t('attach.drop')}>
   <div class="box">
     <Editor
       bind:value={body}
@@ -113,6 +130,7 @@
       onfiles={addFiles}
     />
   </div>
+  </DropZone>
   <div class="bar">
     {#if !editing}
       <input

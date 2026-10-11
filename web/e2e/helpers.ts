@@ -1,4 +1,4 @@
-import { test, type Page, type Browser, type BrowserContext } from '@playwright/test';
+import { type Page, type Browser, type BrowserContext } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -21,9 +21,10 @@ export async function newPage(browser: Browser, opts: Parameters<Browser['newCon
   return ctx.newPage();
 }
 
-test.afterEach(async () => {
+/** Register in each spec file: `test.afterEach(closeExtraPages)`. */
+export async function closeExtraPages() {
   await Promise.all(extra.splice(0).map((c) => c.close()));
-});
+}
 
 export async function shot(page: Page, name: string) {
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true });
