@@ -9,6 +9,8 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: process.env.HB_URL ?? 'http://127.0.0.1:8080',
+    // CI sets PW_CHANNEL=chrome to use the runner's preinstalled Chrome.
+    channel: process.env.PW_CHANNEL || undefined,
     launchOptions: {
       ...(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}),
       // Lets service workers register behind a self-signed test certificate.

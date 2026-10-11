@@ -12,11 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The two jobs run in parallel; wall time is the slower of the two.
 jobs:
-  test:
-    name: Test (unit, server, end-to-end)
+  checks:
+    name: Checks (types, unit, Go)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -29,7 +30,21 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
-          cache-dependency-path: go.sum
+          cache: false # see "Go cache" below
+
+      # setup-go's built-in cache is keyed on go.sum only, so it is saved once
+      # and never refreshed; this key moves with every commit and restores the
+      # newest previous entry, keeping the (slow, -race) SQLite build warm.
+      - name: Go cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-${{ github.job }}-${{ runner.os }}-
 
       - name: Web · install
         working-directory: web
@@ -43,7 +58,7 @@ jobs:
         working-directory: web
         run: npm test
 
-      - name: Web · build
+      - name: Web · build (embedded by the Go binary)
         working-directory: web
         run: npm run build
 
@@ -58,6 +73,53 @@ jobs:
       - name: Go · test
         run: go test -race ./server/...
 
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: false
+
+      - name: Go cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-${{ github.job }}-${{ runner.os }}-
+
+      - name: Web · install and build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # GitHub's Ubuntu runners ship Google Chrome; using it skips Playwright's
+      # browser download and apt dependencies. Fall back if it is ever missing.
+      - name: Browser
+        working-directory: web
+        run: |
+          if command -v google-chrome >/dev/null; then
+            google-chrome --version
+            echo "PW_CHANNEL=chrome" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+          fi
+
       - name: Start server
         run: |
           go build -o "$RUNNER_TEMP/hushbin" ./cmd/hushbin
@@ -71,10 +133,6 @@ jobs:
             nohup "$RUNNER_TEMP/hushbin" > "$RUNNER_TEMP/server.log" 2>&1 &
           for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8080/healthz && exit 0; sleep 0.25; done
           cat "$RUNNER_TEMP/server.log"; exit 1
-
-      - name: Install Chromium for Playwright
-        working-directory: web
-        run: npx playwright install --with-deps chromium
 
       - name: End-to-end tests
         working-directory: web

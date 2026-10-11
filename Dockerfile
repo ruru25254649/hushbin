@@ -14,6 +14,9 @@ ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=readonly
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
+# Compile the dependencies (almost all of it is the pure-Go SQLite) in a layer
+# that only changes with go.sum: cached builds then skip the slowest step.
+RUN go build -trimpath modernc.org/sqlite
 COPY cmd ./cmd
 COPY server ./server
 COPY web/embed.go ./web/embed.go
