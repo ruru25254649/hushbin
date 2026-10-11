@@ -106,6 +106,7 @@ test('keep paste: password, rich markdown, attachments, discussion, edits, owner
 
   // --- reader edits own message; owner sees "edited" and the history
   await reader.locator('.msg').filter({ hasText: 'Hello from Bob' }).first().getByRole('button', { name: 'Edit' }).click();
+  await expect(reader.locator('.msg .composer .cm-content')).toBeFocused();
   await reader.keyboard.press('Control+End');
   await reader.keyboard.insertText(' (edited)');
   await reader.getByRole('button', { name: 'Save' }).click();

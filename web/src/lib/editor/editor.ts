@@ -169,7 +169,11 @@ export function createEditor(parent: HTMLElement, opts: EditorOptions): EditorHa
   });
 
   const view = new EditorView({ state, parent });
-  if (opts.autofocus) view.focus();
+  if (opts.autofocus) {
+    // Editing existing text (a message, a paste, a restored draft): continue at the end.
+    view.dispatch({ selection: { anchor: view.state.doc.length }, scrollIntoView: true });
+    view.focus();
+  }
 
   return {
     view,

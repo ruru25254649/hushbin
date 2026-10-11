@@ -205,12 +205,21 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   return defaultLinkOpen(tokens, idx, options, env, self);
 };
 
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A' && node.hasAttribute('href')) {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noopener noreferrer nofollow');
+// Registered on first use: DOMPurify needs a DOM, and this module is also
+// imported outside the browser (unit tests) for remoteImages().
+let purifyReady = false;
+function purify(): typeof DOMPurify {
+  if (!purifyReady) {
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+      if (node.tagName === 'A' && node.hasAttribute('href')) {
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer nofollow');
+      }
+    });
+    purifyReady = true;
   }
-});
+  return DOMPurify;
+}
 
 /**
  * Canonical form of a remote image URL. The client registers
@@ -247,7 +256,7 @@ export function remoteImages(src: string): string[] {
 }
 
 export function sanitize(html: string): string {
-  return DOMPurify.sanitize(html, {
+  return purify().sanitize(html, {
     FORBID_TAGS: ['style', 'form', 'iframe', 'object', 'embed'],
     FORBID_ATTR: ['srcset', 'action', 'formaction'],
     ADD_ATTR: ['target'],
@@ -266,5 +275,5 @@ export async function renderMarkdown(src: string, l?: RenderLabels): Promise<str
 }
 
 export function sanitizeSvg(svg: string): string {
-  return DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['style'] });
+  return purify().sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['style'] });
 }
