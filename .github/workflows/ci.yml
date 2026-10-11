@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The two jobs run in parallel; wall time is the slower of the two.
+jobs:
+  checks:
+    name: Checks (types, unit, Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: false # see "Go cache" below
+
+      # setup-go's built-in cache is keyed on go.sum only, so it is saved once
+      # and never refreshed; this key moves with every commit and restores the
+      # newest previous entry, keeping the (slow, -race) SQLite build warm.
+      - name: Go cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-${{ github.job }}-${{ runner.os }}-
+
+      - name: Web · install
+        working-directory: web
+        run: npm ci
+
+      - name: Web · type check
+        working-directory: web
+        run: npm run check
+
+      - name: Web · unit tests
+        working-directory: web
+        run: npm test
+
+      - name: Web · build (embedded by the Go binary)
+        working-directory: web
+        run: npm run build
+
+      - name: Go · format
+        run: |
+          unformatted="$(gofmt -l cmd server web)"
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+
+      - name: Go · vet
+        run: go vet ./...
+
+      - name: Go · test
+        run: go test -race ./server/...
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: false
+
+      - name: Go cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ github.job }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-${{ github.job }}-${{ runner.os }}-
+
+      - name: Web · install and build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      # GitHub's Ubuntu runners ship Google Chrome; using it skips Playwright's
+      # browser download and apt dependencies. Fall back if it is ever missing.
+      - name: Browser
+        working-directory: web
+        run: |
+          if command -v google-chrome >/dev/null; then
+            google-chrome --version
+            echo "PW_CHANNEL=chrome" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Start server
+        run: |
+          go build -o "$RUNNER_TEMP/hushbin" ./cmd/hushbin
+          mkdir -p "$RUNNER_TEMP/data"
+          # Relaxed rate limits for the test burst. ALLOW_PRIVATE lets the image
+          # proxy reach the tests' fake image host on 127.0.0.1 (never in production).
+          HB_DATA_DIR="$RUNNER_TEMP/data" HB_ADDR=127.0.0.1:8080 \
+          HB_IMAGE_PROXY_ALLOW_PRIVATE=true \
+          HB_RATE_GENERAL=100000/1m HB_RATE_CREATE=1000/1m HB_RATE_COMMENT=1000/1m \
+          HB_RATE_UPLOAD=1000/1m HB_RATE_AUTH=1000/1m HB_RATE_IMAGE=10000/1m \
+            nohup "$RUNNER_TEMP/hushbin" > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8080/healthz && exit 0; sleep 0.25; done
+          cat "$RUNNER_TEMP/server.log"; exit 1
+
+      - name: End-to-end tests
+        working-directory: web
+        env:
+          HB_URL: http://127.0.0.1:8080
+        run: npx playwright test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            web/test-results
+            ${{ runner.temp }}/server.log
+          retention-days: 7

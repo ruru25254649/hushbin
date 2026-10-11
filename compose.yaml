@@ -1,0 +1,32 @@
+# Example deployment behind a reverse proxy on the same host
+# (see server/README.md for Caddy and Nginx snippets).
+services:
+  hushbin:
+    # Prebuilt x64 image, published by .github/workflows/docker.yml.
+    # Pin a release (e.g. :1.0.0) instead of :latest for predictable upgrades.
+    image: ghcr.io/ruru25254649/hushbin:latest
+    # To build from source instead: comment out `image` and uncomment `build`.
+    # build: .
+    restart: unless-stopped
+    ports:
+      # Only reachable from the host; the reverse proxy terminates TLS.
+      - "127.0.0.1:8080:8080"
+    environment:
+      # The proxy reaches the container through Docker's port forwarding, so
+      # the peer address hushbin sees is the bridge gateway (or 127.0.0.1
+      # with the userland proxy). Trust exactly those so X-Forwarded-For is
+      # honoured; adjust to your network (`docker network inspect`).
+      HB_TRUSTED_PROXIES: "127.0.0.1/32,::1/128,172.16.0.0/12"
+      # HB_ALLOW_NEVER: "false"
+      # HB_MAX_ATTACHMENT: "26214400"
+      # HB_RATE_CREATE: "60/h"
+      # HB_LOG_FORMAT: "json"
+    volumes:
+      - hushbin-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  hushbin-data:
